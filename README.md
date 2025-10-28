@@ -1,12 +1,15 @@
 # Calendar Events App
 
-A React web application with an Express.js server that displays mock calendar events. The app features a "Show Calendar" button that fetches calendar events from the server.
+A React web application with an Express.js server that displays calendar events. The app supports both Google Calendar integration and mock data, with AI-powered event analysis and smart preparation suggestions.
 
 ## Features
 
-- **React Frontend**: Clean, responsive UI with a "Show Calendar" button
-- **Express.js Backend**: RESTful API serving mock calendar data
+- **Google Calendar Integration**: Connect your Google account to fetch real calendar events
+- **Fallback to Sample Data**: Use built-in sample events if you prefer not to connect Google Calendar
+- **React Frontend**: Clean, responsive UI with modern design
+- **Express.js Backend**: RESTful API serving calendar data
 - **AI Event Analysis**: OpenAI-powered agent that analyzes events and suggests preparation tasks
+- **Smart Event Classification**: Automatically categorizes events (travel, meetings, concerts, etc.)
 - **Mock Data**: 10 different event types including:
   - Travel events
   - Concert events  
@@ -20,6 +23,7 @@ A React web application with an Express.js server that displays mock calendar ev
 - **Responsive Design**: Mobile-friendly layout
 - **Error Handling**: Graceful error handling for server connectivity
 - **Loading States**: Visual feedback during data fetching
+- **Easy Authentication**: Simple Google OAuth integration with option to skip
 
 ## Project Structure
 
@@ -192,14 +196,24 @@ The application uses OpenAI's GPT-3.5-turbo model to analyze calendar events and
 - AI analysis feature will show an error message requesting API key setup
 - No mock data or fallback responses are provided
 
+## Google Calendar Setup
+
+For Google Calendar integration, see [GOOGLE_CALENDAR_SETUP.md](GOOGLE_CALENDAR_SETUP.md) for detailed setup instructions.
+
+### Quick Setup:
+1. Get Google API credentials from [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a `.env` file in the `client` directory with your credentials
+3. Install dependencies: `npm install` (in client directory)
+4. Run the app: `npm start`
+
 ## Future Enhancements
 
-- Integration with real Google Calendar API
 - Event creation and editing functionality
-- User authentication
 - Event filtering and search
 - Calendar view (monthly/weekly)
 - Custom AI prompts for different event types
+- Multiple calendar support
+- Event synchronization
 
 ## Contributing
 
