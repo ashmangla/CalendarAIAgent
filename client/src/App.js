@@ -20,7 +20,7 @@ function App() {
     <div className="App">
       <header className="App-header">
         <div className="header-top">
-          <h1 className="app-title">PrepLadder</h1>
+          <h1 className="app-title">MotherBoard</h1>
           {isGoogleConnected && userInfo && (
             <div className="google-user-info-header">
               <img 
@@ -62,7 +62,7 @@ function App() {
       <div className="app-content">
           {activeTab === 'home' && (
             <div className="welcome-section">
-              <h2>Welcome to PrepLadder</h2>
+              <h2>Welcome to MotherBoard</h2>
               <p className="welcome-subtitle">Your intelligent calendar assistant that helps you prepare for events, manage your schedule, and book transportation seamlessly.</p>
               
               <div className="cta-section">
