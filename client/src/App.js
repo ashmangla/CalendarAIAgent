@@ -1,15 +1,47 @@
 import React, { useState } from 'react';
 import './App.css';
 import CalendarEvents from './components/CalendarEvents';
-import UberBooking from './components/UberBooking';
 
 function App() {
   const [activeTab, setActiveTab] = useState('home');
+  const [userInfo, setUserInfo] = useState(null);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  const [disconnectHandler, setDisconnectHandler] = useState(null);
+
+  const handleDisconnect = () => {
+    if (disconnectHandler) {
+      disconnectHandler();
+    }
+    setUserInfo(null);
+    setIsGoogleConnected(false);
+  };
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Calendar & Travel App</h1>
+        <div className="header-top">
+          <h1 className="app-title">PrepLadder</h1>
+          {isGoogleConnected && userInfo && (
+            <div className="google-user-info-header">
+              <img 
+                src={userInfo.imageUrl} 
+                alt={userInfo.name} 
+                className="user-avatar-header"
+              />
+              <div className="user-details-header">
+                <span className="user-name-header">{userInfo.name}</span>
+                <span className="user-email-header">{userInfo.email}</span>
+              </div>
+              <button 
+                className="disconnect-btn-header"
+                onClick={handleDisconnect}
+                title="Disconnect from Google Calendar"
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
+        </div>
         
         <nav className="app-nav">
           <button 
@@ -22,38 +54,58 @@ function App() {
             className={`nav-btn ${activeTab === 'calendar' ? 'active' : ''}`}
             onClick={() => setActiveTab('calendar')}
           >
-            Calendar Events
-          </button>
-          <button 
-            className={`nav-btn ${activeTab === 'uber' ? 'active' : ''}`}
-            onClick={() => setActiveTab('uber')}
-          >
-            Book Uber
+            My Calendar
           </button>
         </nav>
+      </header>
 
-        <div className="app-content">
+      <div className="app-content">
           {activeTab === 'home' && (
             <div className="welcome-section">
-              <h2>Welcome to Your Travel Assistant</h2>
-              <p>Manage your calendar events and book rides all in one place.</p>
+              <h2>Welcome to PrepLadder</h2>
+              <p className="welcome-subtitle">Your intelligent calendar assistant that helps you prepare for events, manage your schedule, and book transportation seamlessly.</p>
+              
+              <div className="cta-section">
+                <button 
+                  className="cta-button"
+                  onClick={() => setActiveTab('calendar')}
+                >
+                  Get Started
+                </button>
+              </div>
+
               <div className="features">
                 <div className="feature-card">
-                  <h3>📅 Calendar Events</h3>
-                  <p>View and manage your calendar events with AI-powered analysis</p>
+                  <div className="feature-icon">📅</div>
+                  <h3>Smart Calendar Management</h3>
+                  <p>Connect your Google Calendar and get AI-powered insights for your events. Automatically generate preparation tasks and get recommendations.</p>
                 </div>
                 <div className="feature-card">
-                  <h3>🚕 Uber Booking</h3>
-                  <p>Book rides, get fare estimates, and track your journey</p>
+                  <div className="feature-icon">🤖</div>
+                  <h3>AI Event Analysis</h3>
+                  <p>Let artificial intelligence analyze your events and suggest optimal preparation tasks, ensuring you're always ready.</p>
+                </div>
+                <div className="feature-card">
+                  <div className="feature-icon">🚕</div>
+                  <h3>Integrated Transportation</h3>
+                  <p>AI automatically suggests transportation options including Uber booking for travel events, both local and global trips.</p>
                 </div>
               </div>
             </div>
           )}
           
-          {activeTab === 'calendar' && <CalendarEvents />}
-          {activeTab === 'uber' && <UberBooking />}
-        </div>
-      </header>
+          {activeTab === 'calendar' && (
+            <CalendarEvents 
+              onUserInfoChange={(info, connected) => {
+                setUserInfo(info);
+                setIsGoogleConnected(connected);
+              }}
+              onDisconnectRequest={(handler) => {
+                setDisconnectHandler(() => handler);
+              }}
+            />
+          )}
+      </div>
     </div>
   );
 }

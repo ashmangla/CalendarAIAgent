@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import EventAnalysis from './EventAnalysis';
 import GoogleAuth from './GoogleAuth';
+import VoiceAssistant from './VoiceAssistant';
 
-const CalendarEvents = () => {
+const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -12,6 +13,14 @@ const CalendarEvents = () => {
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [userInfo, setUserInfo] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(true);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+
+  // Notify parent component of user info changes
+  useEffect(() => {
+    if (onUserInfoChange) {
+      onUserInfoChange(userInfo, isGoogleConnected);
+    }
+  }, [userInfo, isGoogleConnected, onUserInfoChange]);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -38,8 +47,19 @@ const CalendarEvents = () => {
         }
       }
     } catch (err) {
-      setError('Error fetching calendar events. Please try again.');
       console.error('Error fetching events:', err);
+      
+      // Check if it's a scope/permission error
+      if (err.response?.data?.error?.includes('insufficient authentication scopes') || 
+          err.response?.data?.error?.includes('PERMISSION_DENIED')) {
+        setError('Authentication scopes have changed. Please sign out and sign in again.');
+        // Auto-disconnect to force re-authentication
+        setIsGoogleConnected(false);
+        setUserInfo(null);
+        setShowAuthModal(true);
+      } else {
+        setError('Error fetching calendar events. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -61,15 +81,44 @@ const CalendarEvents = () => {
   };
 
   // Handle disconnect from Google
-  const handleDisconnectGoogle = async () => {
+  const handleDisconnectGoogle = useCallback(async () => {
     try {
+      // Revoke Google tokens if available
+      if (userInfo && userInfo.tokens) {
+        try {
+          await axios.post('/api/google-calendar/revoke', {
+            tokens: userInfo.tokens
+          });
+        } catch (error) {
+          console.warn('Failed to revoke tokens:', error);
+          // Continue with disconnect even if revocation fails
+        }
+      }
+      
+      // Clear local state
       setIsGoogleConnected(false);
       setUserInfo(null);
-      fetchEvents(); // Switch back to mock data
+      setShowAuthModal(true); // Show auth modal again
+      
+      // Clean URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      console.log('Disconnected from Google Calendar');
     } catch (error) {
       console.error('Error disconnecting from Google:', error);
+      // Still clear local state even if there's an error
+      setIsGoogleConnected(false);
+      setUserInfo(null);
+      setShowAuthModal(true);
     }
-  };
+  }, [userInfo]);
+
+  // Expose disconnect handler to parent
+  useEffect(() => {
+    if (onDisconnectRequest) {
+      onDisconnectRequest(handleDisconnectGoogle);
+    }
+  }, [onDisconnectRequest, handleDisconnectGoogle]);
 
   // Handle OAuth callback with tokens in URL
   useEffect(() => {
@@ -92,10 +141,11 @@ const CalendarEvents = () => {
         const tokens = JSON.parse(decodeURIComponent(tokensParam));
         console.log('OAuth tokens received:', tokens);
         
-        // Set user info with tokens
+        // Set user info with tokens (we'll fetch real user info after)
         setUserInfo({
-          email: 'user@example.com',
-          name: 'Google User',
+          email: 'Loading...',
+          name: 'Loading...',
+          imageUrl: 'https://lh3.googleusercontent.com/a/default-user-icon',
           tokens: tokens
         });
         setIsGoogleConnected(true);
@@ -103,7 +153,10 @@ const CalendarEvents = () => {
         
         // Clean URL
         window.history.replaceState({}, document.title, window.location.pathname);
-        console.log('OAuth setup complete, fetching events...');
+        console.log('OAuth setup complete, fetching user info...');
+        
+        // Fetch real user information
+        fetchUserInfo(tokens);
       } catch (error) {
         console.error('Error parsing OAuth tokens:', error);
         setError('Failed to authenticate with Google');
@@ -112,6 +165,44 @@ const CalendarEvents = () => {
       console.log('No tokens or error in URL, showing auth modal');
     }
   }, []);
+
+  // Fetch user information from Google
+  const fetchUserInfo = async (tokens) => {
+    try {
+      const response = await axios.post('/api/google-calendar/user-info', {
+        tokens: tokens
+      });
+      
+      if (response.data.success) {
+        const user = response.data.user;
+        setUserInfo({
+          email: user.email,
+          name: user.name,
+          imageUrl: user.picture,
+          tokens: tokens
+        });
+        console.log('User info fetched:', user);
+      } else {
+        console.error('Failed to fetch user info:', response.data.error);
+        // Use fallback user info
+        setUserInfo({
+          email: 'user@google.com',
+          name: 'Google User',
+          imageUrl: 'https://lh3.googleusercontent.com/a/default-user-icon',
+          tokens: tokens
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching user info:', error);
+      // Use fallback user info if API call fails
+      setUserInfo({
+        email: 'user@google.com',
+        name: 'Google User',
+        imageUrl: 'https://lh3.googleusercontent.com/a/default-user-icon',
+        tokens: tokens
+      });
+    }
+  };
 
   useEffect(() => {
     // Only fetch events if user has made a choice (not showing auth modal)
@@ -132,19 +223,146 @@ const CalendarEvents = () => {
     });
   };
 
+  const formatShortDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   const getEventTypeClass = (type) => {
     return type.replace(/\s+/g, '-').toLowerCase();
   };
 
+  // Group events by date for calendar grid
+  const groupEventsByDate = () => {
+    const grouped = {};
+    events.forEach(event => {
+      const eventDate = new Date(event.date);
+      const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+      
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = [];
+      }
+      grouped[dateKey].push(event);
+    });
+    return grouped;
+  };
+
+  // Generate calendar grid for current month
+  const generateCalendarGrid = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    
+    // First day of month
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0); // Last day of month
+    
+    // Get day of week for first day (0 = Sunday, 6 = Saturday)
+    const startDay = firstDay.getDay();
+    
+    // Create array of all days in month
+    const days = [];
+    
+    // Add empty cells for days before month starts
+    for (let i = 0; i < startDay; i++) {
+      days.push(null);
+    }
+    
+    // Add all days of the month
+    for (let day = 1; day <= lastDay.getDate(); day++) {
+      days.push(new Date(year, month, day));
+    }
+    
+    return days;
+  };
+
+  // Navigate to previous month
+  const handlePreviousMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  // Navigate to next month
+  const handleNextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  // Get month/year label
+  const getMonthYearLabel = () => {
+    return currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const getEventsForDate = (date) => {
+    if (!date) return [];
+    const dateKey = date.toISOString().split('T')[0];
+    const groupedEvents = groupEventsByDate();
+    return groupedEvents[dateKey] || [];
+  };
+
+  const isToday = (date) => {
+    if (!date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    return checkDate.getTime() === today.getTime();
+  };
+
+  const isPastEvent = (event) => {
+    if (!event || !event.date) return true;
+    const eventDate = new Date(event.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    eventDate.setHours(0, 0, 0, 0);
+    return eventDate < today;
+  };
+
+  const isPastDate = (date) => {
+    if (!date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    return checkDate < today;
+  };
+
   const handleAnalyzeEvent = (event) => {
-    setSelectedEvent(event);
-    setShowAnalysis(true);
+    // Only allow analyzing future or today's events
+    if (!isPastEvent(event)) {
+      setSelectedEvent(event);
+      setShowAnalysis(true);
+    }
   };
 
   const closeAnalysis = () => {
     setShowAnalysis(false);
     setSelectedEvent(null);
   };
+
+  const handleEventAnalyzed = useCallback((eventId) => {
+    // Mark the event as analyzed in the events list
+    setEvents(prevEvents => 
+      prevEvents.map(event => {
+        if ((event.id || event.eventId) === eventId) {
+          return { ...event, isAnalyzed: true };
+        }
+        return event;
+      })
+    );
+    
+    // Also update selectedEvent if it's the one that was analyzed
+    if (selectedEvent && (selectedEvent.id || selectedEvent.eventId) === eventId) {
+      setSelectedEvent(prev => prev ? { ...prev, isAnalyzed: true } : null);
+    }
+  }, [selectedEvent]);
+
+  const handleVoiceEventAdded = useCallback((newEvent) => {
+    // Add the new event to the events list
+    setEvents(prevEvents => [...prevEvents, newEvent]);
+    // Refresh events to get updated list
+    fetchEvents();
+  }, [fetchEvents]);
 
   const handleTasksAdded = (addedEvents) => {
     // Refresh the events list to show the new AI-generated tasks
@@ -170,9 +388,22 @@ const CalendarEvents = () => {
         <div className="error">
           {error}
           <br />
-          <button className="refresh-btn" onClick={fetchEvents}>
-            Try Again
-          </button>
+          {error.includes('Authentication scopes have changed') ? (
+            <div style={{ marginTop: '1rem' }}>
+              <p style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                This happens when we update the app's permissions. Please:
+              </p>
+              <ol style={{ fontSize: '0.875rem', marginLeft: '1.5rem', marginBottom: '1rem' }}>
+                <li>Click "Sign in with Google" below</li>
+                <li>Grant the new permissions</li>
+                <li>Your calendar will load with your real data</li>
+              </ol>
+            </div>
+          ) : (
+            <button className="refresh-btn" onClick={fetchEvents}>
+              Try Again
+            </button>
+          )}
         </div>
       </div>
     );
@@ -183,26 +414,6 @@ const CalendarEvents = () => {
       <div className="calendar-header">
         <div className="calendar-title-section">
           <h2>Your Calendar Events</h2>
-          {isGoogleConnected && userInfo && (
-            <div className="google-user-info">
-              <img 
-                src={userInfo.imageUrl} 
-                alt={userInfo.name} 
-                className="user-avatar"
-              />
-              <div className="user-details">
-                <span className="user-name">{userInfo.name}</span>
-                <span className="user-email">{userInfo.email}</span>
-              </div>
-              <button 
-                className="disconnect-btn"
-                onClick={handleDisconnectGoogle}
-                title="Disconnect from Google Calendar"
-              >
-                Disconnect
-              </button>
-            </div>
-          )}
         </div>
         <div className="events-count">
           Found {events.length} upcoming events
@@ -212,60 +423,102 @@ const CalendarEvents = () => {
           Refresh Events
         </button>
       </div>
+
+      {!showAuthModal && (
+        <VoiceAssistant
+          onEventAdded={handleVoiceEventAdded}
+          userInfo={userInfo}
+          existingEvents={events}
+        />
+      )}
       
       <div className="calendar-content">
-        <div className="events-grid">
-          {events.map((event) => (
-            <div 
-              key={event.id} 
-              className={`event-card ${getEventTypeClass(event.type)} ${event.aiGenerated ? 'ai-generated' : ''} ${showAnalysis && selectedEvent?.id === event.id ? 'analyzing' : ''}`}
+        <div className="calendar-with-details">
+          <div className="calendar-grid-container">
+            <div className="calendar-grid-header">
+            <button 
+              className="month-nav-btn" 
+              onClick={handlePreviousMonth}
+              aria-label="Previous month"
             >
-            <div className="event-badges">
-              <div className="event-type">{event.type}</div>
-              {event.aiGenerated && <div className="ai-badge">🤖 AI Generated</div>}
-              {event.isAnalyzed && !event.aiGenerated && <div className="analyzed-badge">✅ Analyzed</div>}
-            </div>
-            <div className="event-title">{event.title}</div>
-            <div className="event-date">
-              <strong>Start:</strong> {formatDate(event.date)}
-            </div>
-            {event.endDate && (
-              <div className="event-date">
-                <strong>End:</strong> {formatDate(event.endDate)}
-              </div>
-            )}
-            {event.location && (
-              <div className="event-location">
-                📍 {event.location}
-              </div>
-            )}
-            {event.description && (
-              <div className="event-description">
-                {event.description}
-              </div>
-            )}
-            {!event.aiGenerated && (
-              <button 
-                className="analyze-event-btn"
-                onClick={() => handleAnalyzeEvent(event)}
-                disabled={event.isAnalyzed}
-              >
-                {event.isAnalyzed ? '✅ Already Analyzed' : '🤖 Analyze Event'}
-              </button>
-            )}
+              ‹
+            </button>
+            <h3>{getMonthYearLabel()}</h3>
+            <button 
+              className="month-nav-btn" 
+              onClick={handleNextMonth}
+              aria-label="Next month"
+            >
+              ›
+            </button>
           </div>
-          ))}
+          <div className="calendar-grid">
+            <div className="calendar-weekdays">
+              <div className="calendar-weekday">Sun</div>
+              <div className="calendar-weekday">Mon</div>
+              <div className="calendar-weekday">Tue</div>
+              <div className="calendar-weekday">Wed</div>
+              <div className="calendar-weekday">Thu</div>
+              <div className="calendar-weekday">Fri</div>
+              <div className="calendar-weekday">Sat</div>
+            </div>
+            <div className="calendar-days">
+              {generateCalendarGrid().map((date, index) => (
+                <div 
+                  key={index} 
+                  className={`calendar-day ${!date ? 'calendar-day-empty' : ''} ${isToday(date) ? 'calendar-day-today' : ''}`}
+                >
+                  {date && (
+                    <>
+                      <div className="calendar-day-number">{date.getDate()}</div>
+                      <div className="calendar-day-events">
+                        {getEventsForDate(date).map((event) => (
+                          <div
+                            key={event.id}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            onClick={() => handleAnalyzeEvent(event)}
+                            title={isPastEvent(event) ? `${event.title} (Cannot analyze past events)` : event.title}
+                          >
+                            <span className="event-dot"></span>
+                            <span className="event-title-short">{event.title}</span>
+                            {event.isAnalyzed && !event.isChecklistEvent && !event.isGeneratedEvent && (
+                              <span className="analyzed-badge-small" title="Event has been analyzed">✓</span>
+                            )}
+                            {(event.isChecklistEvent || event.isGeneratedEvent) && (
+                              <span className="checklist-badge-small" title="Generated event from checklist (cannot be analyzed)">📋</span>
+                            )}
+                            {event.isRecurring && <span className="recurring-icon">🔄</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
         
         {showAnalysis && selectedEvent && (
-          <div className="analysis-panel">
+          <div className="event-details-panel">
             <EventAnalysis 
               event={selectedEvent} 
               onClose={closeAnalysis}
               onTasksAdded={handleTasksAdded}
+              onEventAnalyzed={handleEventAnalyzed}
             />
           </div>
         )}
+        {!showAnalysis && (
+          <div className="event-details-placeholder">
+            <div className="placeholder-content">
+              <div className="placeholder-icon">📅</div>
+              <h3>Click an event to view details</h3>
+              <p>Select any event from the calendar to see full details and analysis options</p>
+            </div>
+          </div>
+        )}
+        </div>
       </div>
     </div>
   );

@@ -2,8 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
+const analysisCache = require('./services/analysisCache');
 const uberRoutes = require('./routes/uber');
 const googleCalendarRoutes = require('./routes/googleCalendar');
+const voiceRoutes = require('./routes/voice');
 
 const app = express();
 
@@ -159,15 +161,119 @@ app.get('/api/calendar/events', (req, res) => {
 // Event analysis endpoint
 app.post('/api/analyze-event', async (req, res) => {
   try {
-    // Check if event analyzer is available
-    if (!eventAnalyzer) {
-      return res.status(503).json({
+    const { eventId, event } = req.body;
+    
+    if (!eventId && !event) {
+      return res.status(400).json({
         success: false,
-        message: 'AI Event Analysis is not available. Please set OPENAI_API_KEY environment variable.'
+        message: 'Event ID or event data is required'
       });
     }
 
-    const { eventId } = req.body;
+    let eventToAnalyze;
+    
+    // If event data is provided directly (from Google Calendar), use it
+    if (event) {
+      eventToAnalyze = event;
+    } else {
+      // Otherwise, find the event by ID in mock events
+      eventToAnalyze = mockCalendarEvents.find(e => e.id === eventId);
+      
+      if (!eventToAnalyze) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found'
+        });
+      }
+    }
+
+    // Check if event is a checklist/generated event (these should never be analyzed)
+    if (eventToAnalyze.isChecklistEvent || eventToAnalyze.isGeneratedEvent) {
+      return res.status(400).json({
+        success: false,
+        message: 'Generated events (from checklist items) cannot be analyzed'
+      });
+    }
+
+    // Generate a unique cache key from event
+    // Include id, title, date, and time to ensure uniqueness
+    const eventIdentifier = eventToAnalyze.id || eventToAnalyze.eventId;
+    const eventTime = eventToAnalyze.time || (eventToAnalyze.date && eventToAnalyze.date.includes('T') ? new Date(eventToAnalyze.date).toTimeString().slice(0, 8) : '');
+    const eventDate = eventToAnalyze.date ? (typeof eventToAnalyze.date === 'string' && eventToAnalyze.date.includes('T') 
+      ? new Date(eventToAnalyze.date).toISOString().split('T')[0] 
+      : eventToAnalyze.date) : 'no-date';
+    
+    // Create a more unique cache key
+    const cacheKey = eventIdentifier || `${eventToAnalyze.title}_${eventDate}_${eventTime}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // Check metadata to see if event has been analyzed
+    const isAnalyzedInCache = analysisCache.isAnalyzed(cacheKey);
+    
+    // Check cache first to see if this specific event has been analyzed
+    let analysis = analysisCache.get(cacheKey);
+    let fromCache = false;
+    
+    // If event is marked as analyzed in metadata, check cache
+    if (isAnalyzedInCache && analysis) {
+      // Event has been analyzed and analysis is cached
+      fromCache = true;
+      console.log(`📦 Event already analyzed, returning cached analysis: ${cacheKey}`);
+    } else if (isAnalyzedInCache && !analysis) {
+      // Event marked as analyzed but cache expired - allow re-analysis
+      console.log(`⚠️ Event marked as analyzed but cache expired, allowing re-analysis: ${cacheKey}`);
+    }
+
+    if (!analysis) {
+      // Check if event analyzer is available
+      if (!eventAnalyzer) {
+        return res.status(503).json({
+          success: false,
+          message: 'AI Event Analysis is not available. Please set OPENAI_API_KEY environment variable.'
+        });
+      }
+
+      // Analyze the event using our AI agent
+      analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze);
+      
+      // Store in cache (cache until end of event day)
+      if (eventToAnalyze.date) {
+        analysisCache.set(cacheKey, analysis, eventToAnalyze.date);
+      }
+    } else {
+      fromCache = true;
+      console.log(`📦 Using cached analysis for event: ${cacheKey}`);
+    }
+    
+    // Mark the event as analyzed (only for mock events)
+    if (!event && eventToAnalyze) {
+      eventToAnalyze.isAnalyzed = true;
+    }
+    
+    // Get metadata for the event
+    const metadata = analysisCache.getMetadata(cacheKey);
+    
+    res.json({
+      success: true,
+      event: eventToAnalyze,
+      analysis: analysis,
+      fromCache: fromCache,
+      metadata: metadata || { isAnalyzed: true, analyzedAt: new Date() },
+      message: fromCache ? 'Analysis retrieved from cache' : 'Event analyzed successfully'
+    });
+  } catch (error) {
+    console.error('Error analyzing event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to analyze event',
+      error: error.message
+    });
+  }
+});
+
+// Check event analysis status
+app.get('/api/event-status/:eventId', (req, res) => {
+  try {
+    const { eventId } = req.params;
     
     if (!eventId) {
       return res.status(400).json({
@@ -176,33 +282,21 @@ app.post('/api/analyze-event', async (req, res) => {
       });
     }
 
-    // Find the event by ID
-    const event = mockCalendarEvents.find(e => e.id === eventId);
-    
-    if (!event) {
-      return res.status(404).json({
-        success: false,
-        message: 'Event not found'
-      });
-    }
-
-    // Analyze the event using our AI agent
-    const analysis = await eventAnalyzer.analyzeEvent(event);
-    
-    // Mark the event as analyzed
-    event.isAnalyzed = true;
+    const metadata = analysisCache.getMetadata(eventId);
+    const hasAnalysis = analysisCache.has(eventId);
     
     res.json({
       success: true,
-      event: event,
-      analysis: analysis,
-      message: 'Event analyzed successfully'
+      eventId: eventId,
+      isAnalyzed: !!metadata,
+      hasCachedAnalysis: hasAnalysis,
+      metadata: metadata
     });
   } catch (error) {
-    console.error('Error analyzing event:', error);
+    console.error('Error checking event status:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to analyze event',
+      message: 'Failed to check event status',
       error: error.message
     });
   }
@@ -239,7 +333,9 @@ app.post('/api/add-ai-tasks', (req, res) => {
         endDate: null,
         description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
         location: null,
-        isAnalyzed: false,
+        isAnalyzed: true, // Generated events are pre-analyzed (they came from an analysis)
+        isChecklistEvent: true, // Mark as checklist event - cannot be analyzed again
+        isGeneratedEvent: true, // Mark as generated event (from analyzed event)
         aiGenerated: true,
         originalEventId: originalEventId,
         taskId: task.id,
@@ -273,6 +369,9 @@ app.use('/api/uber', uberRoutes);
 
 // Google Calendar routes
 app.use('/api/google-calendar', googleCalendarRoutes);
+
+// Voice assistant routes
+app.use('/api/voice', voiceRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
