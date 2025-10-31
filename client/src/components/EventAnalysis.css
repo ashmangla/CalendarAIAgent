@@ -235,6 +235,47 @@
   letter-spacing: -0.025em;
 }
 
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.summary-header h5 {
+  margin: 0;
+}
+
+.cache-badge,
+.analyzed-badge {
+  font-size: 0.625rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cache-badge {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: white;
+}
+
+.analyzed-badge {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.info-message {
+  color: #3b82f6;
+  font-size: 0.875rem;
+  padding: 0.75rem;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid #3b82f6;
+  margin: 0;
+}
+
 .prep-time {
   margin-top: 0.5rem;
   padding: 0.375rem 0.5rem;
@@ -359,10 +400,240 @@
   border-radius: 4px;
 }
 
+.task-checklist {
+  margin: 8px 0;
+  background: #f0f9ff;
+  padding: 8px;
+  border-radius: 6px;
+  border-left: 3px solid #667eea;
+}
+
+.task-checklist strong {
+  font-size: 0.625rem;
+  color: #1e40af;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.checklist-items {
+  margin: 6px 0 0 0;
+  padding-left: 16px;
+  list-style-type: none;
+}
+
+.checklist-items li {
+  font-size: 0.625rem;
+  color: #374151;
+  margin-bottom: 3px;
+  line-height: 1.4;
+  position: relative;
+}
+
+.checklist-items li::before {
+  content: "✓";
+  color: #10b981;
+  font-weight: bold;
+  position: absolute;
+  left: -14px;
+  font-size: 0.5rem;
+}
+
 .task-suggested-date {
   margin: 6px 0 0 0;
   font-size: 0.5625rem;
   color: #667eea;
+}
+
+.transportation-task {
+  border-left: 3px solid #10b981 !important;
+}
+
+.transportation-task:hover {
+  border-left-width: 4px !important;
+}
+
+.uber-booking-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 8px;
+  width: 100%;
+  font-family: inherit;
+}
+
+.uber-booking-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
+
+/* Edit Task Button */
+.edit-task-btn {
+  background: rgba(102, 126, 234, 0.1);
+  border: 1px solid #667eea;
+  color: #667eea;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.edit-task-btn:hover {
+  background: #667eea;
+  color: white;
+  transform: scale(1.05);
+}
+
+.task-card.editing {
+  border: 2px solid #667eea;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+/* Checklist Header */
+.checklist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.add-item-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.add-item-btn:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+/* Editable Checklist Items */
+.checklist-item-editable {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.checklist-item-input {
+  flex: 1;
+  padding: 0.375rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-family: inherit;
+  background: white;
+  transition: all 0.2s ease;
+}
+
+.checklist-item-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.remove-item-btn {
+  background: #ef4444;
+  color: white;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  line-height: 1;
+  padding: 0;
+}
+
+.remove-item-btn:hover {
+  background: #dc2626;
+  transform: scale(1.1);
+}
+
+.no-checklist-items {
+  font-size: 0.625rem;
+  color: #94a3b8;
+  font-style: italic;
+  margin: 0.5rem 0 0 0;
+  text-align: center;
+}
+
+/* DateTime Edit Controls */
+.datetime-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.datetime-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.datetime-edit strong {
+  font-size: 0.625rem;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.date-input,
+.time-input {
+  padding: 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  background: white;
+  transition: all 0.2s ease;
+  color: #1e293b;
+}
+
+.date-input:focus,
+.time-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.date-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+.task-suggested-date {
+  margin: 8px 0 0 0;
+}
+
+.no-date-notice {
+  font-size: 0.625rem;
+  color: #94a3b8;
+  font-style: italic;
+  margin: 0;
 }
 
 .selected-tasks-info {
@@ -518,11 +789,19 @@
   letter-spacing: -0.025em;
 }
 
-.reanalyze-btn:hover {
+.reanalyze-btn:hover:not(:disabled) {
   background: #667eea;
   color: white;
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(102, 126, 234, 0.25);
+}
+
+.reanalyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+  color: #94a3b8;
+  border-color: #cbd5e1;
 }
 
 @media (max-width: 768px) {
