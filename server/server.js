@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
 const analysisCache = require('./services/analysisCache');
+const eventsStore = require('./services/eventsStore');
 const uberRoutes = require('./routes/uber');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const voiceRoutes = require('./routes/voice');
@@ -366,6 +367,9 @@ app.post('/api/add-ai-tasks', (req, res) => {
 
 // Uber service routes
 app.use('/api/uber', uberRoutes);
+
+// Initialize events store with mockCalendarEvents
+eventsStore.initialize(mockCalendarEvents);
 
 // Google Calendar routes
 app.use('/api/google-calendar', googleCalendarRoutes);

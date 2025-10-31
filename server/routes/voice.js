@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const VoiceAdapterFactory = require('../services/voice/VoiceAdapterFactory');
 const calendarConflictService = require('../services/calendarConflictService');
+const eventsStore = require('../services/eventsStore');
 
 // Initialize voice adapter
 let voiceAdapter;
@@ -280,29 +281,157 @@ router.post('/create-event', async (req, res) => {
       });
     }
 
-    // If tokens provided and override is false, check for conflicts
-    if (tokens && tokens.access_token && !override) {
-      // TODO: Fetch and check conflicts from Google Calendar
-      // For now, we'll proceed with creation
+    // Parse date and time
+    const duration = eventDetails.duration || 60; // Default 60 minutes
+    const eventDate = eventDetails.date;
+    let eventTime = eventDetails.time;
+    
+    // Ensure time is in HH:MM format
+    if (eventTime && !eventTime.includes(':')) {
+      // Handle formats like "730" or "7:30pm"
+      const timeMatch = eventTime.match(/(\d{1,2}):?(\d{2})?\s?(am|pm)?/i);
+      if (timeMatch) {
+        let hours = parseInt(timeMatch[1]);
+        const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+        const period = timeMatch[3]?.toLowerCase();
+        
+        if (period === 'pm' && hours !== 12) hours += 12;
+        if (period === 'am' && hours === 12) hours = 0;
+        
+        eventTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      }
     }
+    
+    // Ensure date is in YYYY-MM-DD format
+    let normalizedDate = eventDate;
+    if (!eventDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const dateObj = new Date(eventDate);
+      if (isNaN(dateObj.getTime())) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid date format. Please provide date in YYYY-MM-DD format.'
+        });
+      }
+      normalizedDate = dateObj.toISOString().split('T')[0];
+    }
+    
+    // Create datetime string (local time)
+    const startDateTime = `${normalizedDate}T${eventTime}:00`;
+    const startDate = new Date(startDateTime);
+    
+    // Validate the date was parsed correctly
+    if (isNaN(startDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid date or time format. Unable to parse event date/time.'
+      });
+    }
+    
+    const endDate = new Date(startDate.getTime() + duration * 60000);
 
     // Create event object
-    const event = {
-      id: `event_${Date.now()}`,
+    let event = {
+      id: `voice_${Date.now()}`,
       title: eventDetails.title,
-      date: `${eventDetails.date}T${eventDetails.time}:00`,
-      time: eventDetails.time,
-      duration: eventDetails.duration || 60,
+      date: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      time: eventTime,
+      duration: duration,
       location: eventDetails.location || null,
+      description: eventDetails.description || '',
       type: _determineEventType(eventDetails.title),
-      source: tokens ? 'google' : 'voice'
+      source: tokens ? 'google' : 'voice',
+      isAnalyzed: false,
+      aiGenerated: false
     };
+
+    let eventCreatedInGoogle = false;
 
     // If Google Calendar tokens provided, create in Google Calendar
     if (tokens && tokens.access_token) {
-      // TODO: Implement Google Calendar event creation
-      // For now, return success
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(tokens);
+        
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+        
+        // Get user's timezone (default to America/New_York if not available)
+        // TODO: Get timezone from user preferences or detect from tokens
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+        
+        // Format dates in the specified timezone for Google Calendar
+        const formatDateTime = (date, timezone) => {
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          const seconds = String(date.getSeconds()).padStart(2, '0');
+          return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+        };
+        
+        // Create event in Google Calendar
+        const googleEvent = {
+          summary: eventDetails.title,
+          description: eventDetails.description || '',
+          location: eventDetails.location || '',
+          start: {
+            dateTime: formatDateTime(startDate, timeZone),
+            timeZone: timeZone
+          },
+          end: {
+            dateTime: formatDateTime(endDate, timeZone),
+            timeZone: timeZone
+          }
+        };
+        
+        console.log(`📅 Creating Google Calendar event:`, {
+          title: googleEvent.summary,
+          start: googleEvent.start.dateTime,
+          timezone: timeZone
+        });
+        
+        const createdEvent = await calendar.events.insert({
+          calendarId: 'primary',
+          resource: googleEvent
+        });
+        
+        // Update event with Google Calendar data
+        event.id = createdEvent.data.id;
+        event.date = createdEvent.data.start.dateTime || createdEvent.data.start.date;
+        event.endDate = createdEvent.data.end.dateTime || createdEvent.data.end.date;
+        event.source = 'google';
+        eventCreatedInGoogle = true;
+        
+        console.log(`✅ Created event in Google Calendar: ${event.title} (ID: ${event.id})`);
+      } catch (googleError) {
+        console.error('❌ Error creating Google Calendar event:', googleError);
+        console.error('Error details:', {
+          message: googleError.message,
+          code: googleError.code,
+          response: googleError.response?.data
+        });
+        // Fall through to create in local events as fallback
+        console.log('⚠️ Google Calendar creation failed, adding to local calendar');
+        eventCreatedInGoogle = false;
+        
+        // If it's an authentication error, throw it so user knows to re-authenticate
+        if (googleError.code === 401 || googleError.code === 403) {
+          throw new Error('Google Calendar authentication failed. Please sign in again.');
+        }
+      }
     }
+
+    // Add to local events store for UI updates
+    // If created in Google Calendar, it will be fetched on next refresh
+    // But we add it locally for immediate UI feedback
+    if (!eventCreatedInGoogle) {
+      // For non-Google events, add to local store
+      eventsStore.addEvent(event);
+    }
+    // Note: Google Calendar events will appear automatically when calendar is refreshed
+    // since they're fetched from Google Calendar API
 
     // Generate success response
     const response = await voiceAdapter.generateResponse({
@@ -310,7 +439,8 @@ router.post('/create-event', async (req, res) => {
       eventTitle: eventDetails.title,
       date: eventDetails.date,
       time: eventDetails.time,
-      override: override
+      override: override,
+      location: eventDetails.location
     });
 
     res.json({
@@ -319,13 +449,16 @@ router.post('/create-event', async (req, res) => {
       response: response,
       message: override ? 
         'Event created despite conflict. You chose to double book.' : 
-        'Event created successfully'
+        `Event created successfully${eventCreatedInGoogle ? ' in Google Calendar' : ' in local calendar'}`,
+      createdInGoogle: eventCreatedInGoogle
     });
   } catch (error) {
-    console.error('Error creating event:', error);
+    console.error('❌ Error in create-event endpoint:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to create event'
+      error: error.message || 'Failed to create event',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
