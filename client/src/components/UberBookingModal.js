@@ -3,6 +3,7 @@ import './UberBookingModal.css';
 
 const UberBookingModal = ({ event, onClose, onBook }) => {
   const [pickupLocation, setPickupLocation] = useState('');
+  const [destination, setDestination] = useState(event?.location || '');
   const [estimatedFare, setEstimatedFare] = useState(null);
   const [rideType, setRideType] = useState('uberx');
   const [loading, setLoading] = useState(false);
@@ -16,13 +17,8 @@ const UberBookingModal = ({ event, onClose, onBook }) => {
     { id: 'black', name: 'Black', price: 15, icon: '🚖' }
   ];
 
-  useEffect(() => {
-    // Generate mock fare estimate when component mounts
-    generateFareEstimate();
-  }, [pickupLocation, rideType]);
-
   const generateFareEstimate = () => {
-    if (!pickupLocation.trim()) {
+    if (!pickupLocation.trim() || !destination.trim()) {
       setEstimatedFare(null);
       return;
     }
@@ -41,6 +37,12 @@ const UberBookingModal = ({ event, onClose, onBook }) => {
     });
   };
 
+  useEffect(() => {
+    // Generate mock fare estimate when component mounts or locations change
+    generateFareEstimate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickupLocation, destination, rideType]);
+
   const handleBookRide = () => {
     setLoading(true);
     
@@ -54,19 +56,15 @@ const UberBookingModal = ({ event, onClose, onBook }) => {
         if (onBook) {
           onBook({
             pickup: pickupLocation,
-            destination: event.location || 'Event Location',
+            destination: destination || event.location || 'Event Location',
             rideType: rideType,
             fare: estimatedFare,
-            eventId: event.id
+            eventId: event?.id
           });
         }
         onClose();
       }, 2000);
     }, 1500);
-  };
-
-  const getEventLocation = () => {
-    return event.location || 'Event Location';
   };
 
   return (
@@ -105,13 +103,19 @@ const UberBookingModal = ({ event, onClose, onBook }) => {
                     <span className="location-icon">🎯</span>
                     <div>
                       <label>Destination</label>
-                      <div className="destination-display">{getEventLocation()}</div>
+                      <input
+                        type="text"
+                        placeholder="Enter destination address"
+                        value={destination}
+                        onChange={(e) => setDestination(e.target.value)}
+                        className="location-input"
+                      />
                     </div>
                   </div>
                 </div>
               </div>
 
-              {pickupLocation && (
+              {pickupLocation && destination && (
                 <>
                   <div className="ride-options">
                     <h4>Choose Ride Type</h4>
@@ -153,7 +157,7 @@ const UberBookingModal = ({ event, onClose, onBook }) => {
                 <button
                   className="book-ride-btn"
                   onClick={handleBookRide}
-                  disabled={!pickupLocation || !estimatedFare || loading}
+                  disabled={!pickupLocation || !destination || !estimatedFare || loading}
                 >
                   {loading ? 'Booking...' : 'Book Ride'}
                 </button>

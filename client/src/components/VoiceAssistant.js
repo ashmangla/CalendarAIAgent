@@ -234,25 +234,38 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
         throw new Error(createResponse.data.error || 'Failed to create event');
       }
 
-      const { event, response: successResponse } = createResponse.data;
+      const { event, response: successResponse, createdInGoogle } = createResponse.data;
       
       // Clear pending state
       setPendingEvent(null);
       setConflictData(null);
       setAlternatives([]);
       
-      // Notify parent component
+      // Notify parent component (this triggers event refresh)
       if (onEventAdded) {
         onEventAdded(event);
       }
 
       // Speak success message
-      setResponse(successResponse);
-      speak(successResponse);
+      let finalMessage = successResponse;
+      if (createdInGoogle) {
+        finalMessage = `I've added ${event.title} to your Google Calendar for ${new Date(event.date).toLocaleDateString()} at ${event.time || new Date(event.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+      }
+      setResponse(finalMessage);
+      speak(finalMessage);
       setStatus('idle');
     } catch (error) {
       console.error('Error creating event:', error);
-      const errorMessage = 'Sorry, I couldn\'t create that event. Please try again.';
+      const errorMsg = error.response?.data?.error || error.message || 'Sorry, I couldn\'t create that event.';
+      let errorMessage = `Sorry, ${errorMsg.toLowerCase()}`;
+      
+      // Provide more helpful error messages
+      if (errorMsg.includes('authentication') || errorMsg.includes('sign in')) {
+        errorMessage = 'Please sign in to Google Calendar to add events.';
+      } else if (errorMsg.includes('Invalid date') || errorMsg.includes('format')) {
+        errorMessage = 'I had trouble understanding the date or time. Please try saying it differently, like "November 1st at 7:30 PM".';
+      }
+      
       setResponse(errorMessage);
       speak(errorMessage);
       setStatus('idle');
