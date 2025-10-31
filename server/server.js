@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
 const uberRoutes = require('./routes/uber');
+const googleCalendarRoutes = require('./routes/googleCalendar');
 
 const app = express();
 
@@ -15,7 +16,7 @@ try {
   console.log('⚠️  OpenAI Event Analyzer initialization failed:', error.message);
   console.log('💡 Set OPENAI_API_KEY environment variable to enable AI analysis');
 }
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Middleware
 app.use(cors());
@@ -269,6 +270,9 @@ app.post('/api/add-ai-tasks', (req, res) => {
 
 // Uber service routes
 app.use('/api/uber', uberRoutes);
+
+// Google Calendar routes
+app.use('/api/google-calendar', googleCalendarRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
