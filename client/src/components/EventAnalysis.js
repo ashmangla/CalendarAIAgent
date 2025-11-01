@@ -282,7 +282,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       if (response.data.success) {
         // Now mark the event as analyzed since tasks have been added
         setIsAlreadyAnalyzed(true);
-        alert(`Successfully added ${selectedTasks.length} preparation tasks to your calendar!`);
         onTasksAdded && onTasksAdded(response.data.addedEvents);
         onClose();
       } else {
