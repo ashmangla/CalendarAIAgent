@@ -1,13 +1,51 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import './EventDetails.css';
 
 const EventDetails = ({ event, onClose }) => {
+  const [linkedTasks, setLinkedTasks] = useState([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+
+  // Fetch linked tasks if this is an analyzed event
+  useEffect(() => {
+    const fetchLinkedTasks = async () => {
+      if (event.isAnalyzed && event.id) {
+        setLoadingTasks(true);
+        try {
+          const response = await axios.post('/api/get-linked-tasks', {
+            eventId: event.id
+          });
+
+          if (response.data.success) {
+            setLinkedTasks(response.data.linkedTasks || []);
+          }
+        } catch (error) {
+          console.error('Error fetching linked tasks:', error);
+        } finally {
+          setLoadingTasks(false);
+        }
+      }
+    };
+
+    fetchLinkedTasks();
+  }, [event.id, event.isAnalyzed]);
+
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const formatShortDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -142,6 +180,56 @@ const EventDetails = ({ event, onClose }) => {
               <strong>Generated from Checklist</strong>
               <p>This event was automatically generated from an event analysis checklist.</p>
             </div>
+          </div>
+        )}
+
+        {event.isAnalyzed && !event.isAIGenerated && (
+          <div className="linked-tasks-section">
+            <h3 className="linked-tasks-title">📋 Linked Preparation Tasks</h3>
+
+            {loadingTasks ? (
+              <div className="loading-tasks">
+                <div className="loading-spinner"></div>
+                <p>Loading linked tasks...</p>
+              </div>
+            ) : linkedTasks.length > 0 ? (
+              <>
+                <p className="linked-tasks-count">
+                  {linkedTasks.length} {linkedTasks.length === 1 ? 'task' : 'tasks'} generated from this event
+                </p>
+                <div className="linked-tasks-list">
+                  {linkedTasks.map((task) => (
+                    <div key={task.id} className="linked-task-card">
+                      <div className="linked-task-header">
+                        <h4 className="linked-task-title">{task.title}</h4>
+                        {task.priority && (
+                          <span className={`task-priority-badge priority-${task.priority.toLowerCase()}`}>
+                            {task.priority}
+                          </span>
+                        )}
+                      </div>
+                      <div className="linked-task-meta">
+                        <span className="task-date">
+                          <span className="task-icon">📅</span>
+                          {formatShortDate(task.date)}
+                        </span>
+                        {task.category && (
+                          <span className="task-category">
+                            <span className="task-icon">🏷️</span>
+                            {task.category}
+                          </span>
+                        )}
+                      </div>
+                      {task.description && (
+                        <p className="linked-task-description">{task.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="no-linked-tasks">No preparation tasks have been added yet.</p>
+            )}
           </div>
         )}
       </div>

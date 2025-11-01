@@ -29,20 +29,18 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       
       if (response.data.success) {
         setAnalysis(response.data.analysis);
-        setIsAlreadyAnalyzed(true);
+        // Don't mark as analyzed yet - only after tasks are added
+        // setIsAlreadyAnalyzed(true); // REMOVED - now set only when tasks are added
         const wasFromCache = response.data.fromCache || false;
         setFromCache(wasFromCache);
-        
+
         // Store metadata
         if (response.data.metadata) {
           setMetadata(response.data.metadata);
         }
-        
-        // Notify parent that event was analyzed (only if not from cache, as cache means it was already analyzed)
-        if (!wasFromCache && onEventAnalyzed && event) {
-          const eventId = event.id || event.eventId || `${event.title}_${event.date}`;
-          onEventAnalyzed(eventId);
-        }
+
+        // Don't notify parent that event was analyzed yet
+        // Only notify after tasks are actually added to the calendar
       } else {
         setError(response.data.message || 'Failed to analyze event');
       }
@@ -282,6 +280,8 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       });
 
       if (response.data.success) {
+        // Now mark the event as analyzed since tasks have been added
+        setIsAlreadyAnalyzed(true);
         alert(`Successfully added ${selectedTasks.length} preparation tasks to your calendar!`);
         onTasksAdded && onTasksAdded(response.data.addedEvents);
         onClose();

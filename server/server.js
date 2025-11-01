@@ -262,38 +262,30 @@ app.post('/api/analyze-event', async (req, res) => {
       console.log(`📦 Using cached analysis for event: ${cacheKey}`);
     }
     
-    // Mark the event as analyzed (only for mock events)
-    if (!event && eventToAnalyze) {
-      eventToAnalyze.isAnalyzed = true;
-    }
-
-    // If this is a Google Calendar event and user has tokens, update the event in Google Calendar
-    if (event && event.source === 'google' && req.session && req.session.tokens) {
+    // Don't mark the event as analyzed yet - wait until tasks are added
+    // If this event is in Google Calendar, remove the isAnalyzed flag
+    const tokens = req.session?.tokens;
+    if (tokens && tokens.access_token && eventIdentifier && eventToAnalyze.source === 'google') {
       try {
         const { google } = require('googleapis');
         const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials(req.session.tokens);
-
+        oauth2Client.setCredentials(tokens);
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-        // Update the event with isAnalyzed extended property
         await calendar.events.patch({
           calendarId: 'primary',
-          eventId: event.id,
+          eventId: eventIdentifier,
           resource: {
             extendedProperties: {
               private: {
-                isAnalyzed: 'true',
-                analyzedAt: new Date().toISOString()
+                isAnalyzed: 'false'
               }
             }
           }
         });
-
-        console.log(`✅ Marked event as analyzed in Google Calendar: ${event.title} (ID: ${event.id})`);
-      } catch (googleError) {
-        console.error('⚠️ Failed to update Google Calendar event:', googleError.message);
-        // Don't fail the request if Google Calendar update fails
+        console.log(`🔄 Removed analyzed flag from Google Calendar event: ${eventIdentifier}`);
+      } catch (patchError) {
+        console.error('⚠️ Failed to remove analyzed flag from Google Calendar:', patchError.message);
       }
     }
 
@@ -302,10 +294,10 @@ app.post('/api/analyze-event', async (req, res) => {
 
     res.json({
       success: true,
-      event: { ...eventToAnalyze, isAnalyzed: true },
+      event: { ...eventToAnalyze, isAnalyzed: false }, // Return as not analyzed until tasks are added
       analysis: analysis,
       fromCache: fromCache,
-      metadata: metadata || { isAnalyzed: true, analyzedAt: new Date() },
+      metadata: metadata || { isAnalyzed: false, analyzedAt: new Date() },
       message: fromCache ? 'Analysis retrieved from cache' : 'Event analyzed successfully'
     });
   } catch (error) {
@@ -450,6 +442,26 @@ app.post('/api/add-ai-tasks', async (req, res) => {
         createdInGoogle = true;
         console.log(`✅ Created ${addedEvents.length} AI tasks in Google Calendar`);
 
+        // Mark the original event as analyzed now that tasks have been added
+        try {
+          await calendar.events.patch({
+            calendarId: 'primary',
+            eventId: originalEventId,
+            resource: {
+              extendedProperties: {
+                private: {
+                  isAnalyzed: 'true',
+                  analyzedAt: new Date().toISOString(),
+                  tasksCount: selectedTasks.length.toString()
+                }
+              }
+            }
+          });
+          console.log(`✅ Marked original event as analyzed: ${originalEventId}`);
+        } catch (patchError) {
+          console.error('⚠️ Failed to mark original event as analyzed:', patchError.message);
+        }
+
       } catch (googleError) {
         console.error('❌ Error creating tasks in Google Calendar:', googleError.message);
         // Fall through to create in mock events
@@ -497,6 +509,100 @@ app.post('/api/add-ai-tasks', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to add AI tasks',
+      error: error.message
+    });
+  }
+});
+
+// Get linked AI-generated tasks for an event
+app.post('/api/get-linked-tasks', async (req, res) => {
+  try {
+    const { eventId } = req.body;
+    const tokens = req.session?.tokens;
+
+    if (!eventId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Event ID is required'
+      });
+    }
+
+    const linkedTasks = [];
+
+    // If user has Google Calendar tokens, fetch from Google Calendar
+    if (tokens && tokens.access_token) {
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(tokens);
+
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+        // Fetch events from Google Calendar
+        const now = new Date();
+        const oneMonthLater = new Date(now);
+        oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
+
+        const response = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: now.toISOString(),
+          timeMax: oneMonthLater.toISOString(),
+          maxResults: 250,
+          singleEvents: true,
+          orderBy: 'startTime'
+        });
+
+        // Filter events that are linked to this event
+        (response.data.items || []).forEach(event => {
+          const originalEventId = event.extendedProperties?.private?.originalEventId;
+          const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
+                               event.extendedProperties?.private?.isChecklistEvent === 'true';
+
+          if (originalEventId === eventId && isAIGenerated) {
+            linkedTasks.push({
+              id: event.id,
+              title: event.summary,
+              date: event.start?.dateTime || event.start?.date,
+              endDate: event.end?.dateTime || event.end?.date,
+              description: event.description || '',
+              location: event.location || '',
+              priority: event.extendedProperties?.private?.priority,
+              category: event.extendedProperties?.private?.category,
+              isAIGenerated: true,
+              isChecklistEvent: true,
+              source: 'google'
+            });
+          }
+        });
+
+        console.log(`📋 Found ${linkedTasks.length} linked tasks for event ${eventId}`);
+
+      } catch (googleError) {
+        console.error('❌ Error fetching linked tasks from Google Calendar:', googleError.message);
+        // Fall through to check mock events
+      }
+    }
+
+    // If not found in Google Calendar, check mock events
+    if (linkedTasks.length === 0) {
+      mockCalendarEvents.forEach(event => {
+        if (event.originalEventId === eventId && event.isAIGenerated) {
+          linkedTasks.push(event);
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      linkedTasks: linkedTasks,
+      count: linkedTasks.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching linked tasks:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch linked tasks',
       error: error.message
     });
   }
