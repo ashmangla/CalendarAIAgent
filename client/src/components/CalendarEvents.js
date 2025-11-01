@@ -16,13 +16,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   const [showAuthModal, setShowAuthModal] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
-
-  // Notify parent component of user info changes
-  useEffect(() => {
-    if (onUserInfoChange) {
-      onUserInfoChange(userInfo, isGoogleConnected);
-    }
-  }, [userInfo, isGoogleConnected, onUserInfoChange]);
+  const [weatherData, setWeatherData] = useState({});
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -67,11 +61,74 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     }
   }, [isGoogleConnected, userInfo]);
 
+  // Fetch weather for today's events with locations
+  const fetchWeatherForTodayEvents = useCallback(async (todayEvents) => {
+    console.log('🌤️ fetchWeatherForTodayEvents called', { todayEvents, showTodayOnly });
+
+    if (!todayEvents || todayEvents.length === 0 || !showTodayOnly) {
+      console.log('🌤️ Skipping weather fetch - no events or not showing today');
+      return;
+    }
+
+    const eventsWithLocation = todayEvents.filter(event => event.location);
+    console.log('🌤️ Events with locations:', eventsWithLocation.map(e => ({ id: e.id, title: e.title, location: e.location })));
+
+    const weatherResults = {};
+
+    // Fetch weather for ALL events with locations (including analyzed and AI-generated)
+    const weatherPromises = eventsWithLocation
+      .map(async (event) => {
+        try {
+          console.log(`🌤️ Fetching weather for event: ${event.title} at ${event.location}`);
+          const response = await axios.post('/api/get-weather', {
+            location: event.location,
+            eventDate: event.date,
+            eventType: event.type,
+            eventTitle: event.title
+          });
+
+          console.log(`🌤️ Weather response for ${event.title}:`, response.data);
+
+          if (response.data.success && response.data.weather) {
+            weatherResults[event.id] = response.data.weather;
+            console.log(`🌤️ Added weather for ${event.title}:`, weatherResults[event.id]);
+          }
+        } catch (error) {
+          console.error(`❌ Error fetching weather for event ${event.id}:`, error);
+        }
+      });
+
+    await Promise.all(weatherPromises);
+    console.log('🌤️ Final weather results:', weatherResults);
+    setWeatherData(weatherResults);
+  }, [showTodayOnly]);
+
+  // Fetch weather when events change and we're in "Today" view
+  useEffect(() => {
+    console.log('🌤️ Weather useEffect triggered', {
+      showTodayOnly,
+      eventsCount: events.length,
+      weatherDataKeys: Object.keys(weatherData)
+    });
+
+    if (showTodayOnly && events.length > 0) {
+      const todayEvents = events.filter(event => isToday(new Date(event.date)));
+      console.log('🌤️ Found today events:', todayEvents.length, todayEvents.map(e => ({ title: e.title, location: e.location, date: e.date })));
+      fetchWeatherForTodayEvents(todayEvents);
+    } else {
+      console.log('🌤️ Skipping - showTodayOnly:', showTodayOnly, 'events.length:', events.length);
+    }
+  }, [events, showTodayOnly, fetchWeatherForTodayEvents]);
+
   // Handle Google authentication success
   const handleGoogleAuthSuccess = (user) => {
     setUserInfo(user);
     setIsGoogleConnected(true);
     setShowAuthModal(false);
+    // Notify parent component
+    if (onUserInfoChange) {
+      onUserInfoChange(user, true);
+    }
     fetchEvents(); // Fetch events after successful auth
   };
 
@@ -140,14 +197,19 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
         if (response.data.success && response.data.isAuthenticated) {
           console.log('Found existing session:', response.data.userInfo);
-          setUserInfo({
+          const user = {
             email: response.data.userInfo.email,
             name: response.data.userInfo.name,
             imageUrl: response.data.userInfo.picture,
             tokens: response.data.tokens
-          });
+          };
+          setUserInfo(user);
           setIsGoogleConnected(true);
           setShowAuthModal(false);
+          // Notify parent component
+          if (onUserInfoChange) {
+            onUserInfoChange(user, true);
+          }
         } else {
           console.log('No existing session found');
         }
@@ -569,6 +631,22 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                             return event.description;
                           })()}
                         </p>
+                      )}
+
+                      {/* Display weather for events with location */}
+                      {weatherData[event.id] && (
+                        <div className="event-weather-card">
+                          <div className="weather-header">
+                            <span className="weather-icon">🌤️</span>
+                            <span className="weather-temp">{weatherData[event.id].temperature}°C</span>
+                            <span className="weather-desc">{weatherData[event.id].description}</span>
+                          </div>
+                          {weatherData[event.id].suggestions && weatherData[event.id].suggestions.length > 0 && (
+                            <div className="weather-suggestion">
+                              {weatherData[event.id].suggestions[0]}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>

@@ -15,24 +15,32 @@ class WeatherService {
    */
   async getWeatherForEvent(location, eventDate) {
     try {
+      console.log('🌤️ getWeatherForEvent called:', { location, eventDate });
       const now = new Date();
       const eventDateTime = new Date(eventDate);
       const hoursUntilEvent = (eventDateTime - now) / (1000 * 60 * 60);
 
+      console.log('🌤️ Time calculation:', { now: now.toISOString(), eventDateTime: eventDateTime.toISOString(), hoursUntilEvent });
+
       // Open-Meteo provides 7-day forecast (168 hours)
       if (hoursUntilEvent > 168) {
-        console.log('Event is too far in the future for accurate weather forecast (max 7 days)');
+        console.log('🌤️ Event is too far in the future for accurate weather forecast (max 7 days)');
         return null;
       }
 
-      // If event is in the past, don't fetch weather
-      if (hoursUntilEvent < 0) {
+      // If event is more than 24 hours in the past, don't fetch weather
+      // Allow events from today even if they've already happened
+      if (hoursUntilEvent < -24) {
+        console.log('🌤️ Event is more than 24 hours in the past, hours until event:', hoursUntilEvent);
         return null;
       }
 
       // Get coordinates for the location
+      console.log('🌤️ Getting coordinates for:', location);
       const geoData = await this.getCoordinates(location);
+      console.log('🌤️ Geocoding result:', geoData);
       if (!geoData) {
+        console.log('🌤️ Failed to get coordinates for location');
         return null;
       }
 
@@ -87,17 +95,50 @@ class WeatherService {
    */
   async getCoordinates(location) {
     try {
+      // Extract city from full address if needed
+      // E.g., "Redmond High School, 17272 NE 104th St, Redmond, WA 98052, USA" -> "Redmond"
+      let searchLocation = location;
+      let cityName = null;
+
+      // Check if it's a US address with ZIP code pattern
+      const zipMatch = location.match(/([A-Za-z\s]+),\s*([A-Z]{2})\s*\d{5}/);
+      if (zipMatch) {
+        // Extract just the city name (state abbreviations don't work well with Open-Meteo)
+        cityName = zipMatch[1].trim();
+        console.log('🌤️ Extracted city from address:', cityName);
+      } else {
+        // Try to extract city from comma-separated address
+        const parts = location.split(',').map(p => p.trim());
+        if (parts.length >= 3) {
+          // For addresses like "School, Street, City, State, ZIP, Country"
+          // Try the third-to-last part which is usually the city
+          cityName = parts[parts.length - 3];
+          console.log('🌤️ Extracted city from parts:', cityName);
+        } else if (parts.length >= 2) {
+          // For simpler addresses, try second-to-last
+          cityName = parts[parts.length - 2];
+          console.log('🌤️ Using second-to-last part as city:', cityName);
+        }
+      }
+
+      // Use the extracted city name or fall back to original location
+      searchLocation = cityName || location;
+      console.log('🌤️ Geocoding search for:', searchLocation);
+
       const response = await axios.get(this.geocodingUrl, {
         params: {
-          name: location,
+          name: searchLocation,
           count: 1,
           language: 'en',
           format: 'json'
         }
       });
 
+      console.log('🌤️ Geocoding API response:', response.data);
+
       if (response.data && response.data.results && response.data.results.length > 0) {
         const data = response.data.results[0];
+        console.log('🌤️ Geocoding success:', { lat: data.latitude, lon: data.longitude, name: data.name });
         return {
           lat: data.latitude,
           lon: data.longitude,
@@ -106,9 +147,10 @@ class WeatherService {
         };
       }
 
+      console.log('🌤️ No geocoding results found');
       return null;
     } catch (error) {
-      console.error('Error getting coordinates:', error.message);
+      console.error('🌤️ Error getting coordinates:', error.message);
       return null;
     }
   }

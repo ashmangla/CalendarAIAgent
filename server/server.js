@@ -6,6 +6,7 @@ const session = require('express-session');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
 const analysisCache = require('./services/analysisCache');
 const eventsStore = require('./services/eventsStore');
+const weatherService = require('./services/weatherService');
 const uberRoutes = require('./routes/uber');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const voiceRoutes = require('./routes/voice');
@@ -22,6 +23,83 @@ try {
   console.log('💡 Set OPENAI_API_KEY environment variable to enable AI analysis');
 }
 const PORT = process.env.PORT || 5001;
+
+/**
+ * Ensure the analysis payload includes up-to-date weather information.
+ * Refreshes cached analyses when the event is within the 7-day forecast window.
+ */
+async function refreshWeatherDataForAnalysis(analysis, event) {
+  try {
+    if (!analysis || !event) {
+      return false;
+    }
+
+    const location = (event.location || '').trim();
+    if (!location || !event.date) {
+      return false;
+    }
+
+    const eventDate = new Date(event.date);
+    if (Number.isNaN(eventDate.getTime())) {
+      return false;
+    }
+
+    const now = new Date();
+    if (eventDate <= now) {
+      return false;
+    }
+
+    const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
+    if (hoursUntilEvent > 168) {
+      return false;
+    }
+
+    const existingWeather = analysis.weather || null;
+    const existingTimestamp = existingWeather?.fetchedAt ? new Date(existingWeather.fetchedAt) : null;
+    const existingLocation = existingWeather?.queryLocation ? existingWeather.queryLocation.toLowerCase() : '';
+    const normalizedLocation = location.toLowerCase();
+
+    const needsRefresh =
+      !existingWeather ||
+      !existingTimestamp ||
+      (now - existingTimestamp) > 3 * 60 * 60 * 1000 ||
+      existingLocation !== normalizedLocation;
+
+    if (!needsRefresh) {
+      return false;
+    }
+
+    const weatherData = await weatherService.getWeatherForEvent(location, event.date);
+    if (!weatherData) {
+      return false;
+    }
+
+    const weatherSuggestions = weatherService.generateWeatherSuggestions(
+      weatherData,
+      event.type,
+      event.title
+    );
+
+    analysis.weather = {
+      temperature: weatherData.temperature,
+      feelsLike: weatherData.feelsLike,
+      description: weatherData.description,
+      main: weatherData.main,
+      precipitation: Math.round(weatherData.precipitation),
+      windSpeed: weatherData.windSpeed,
+      humidity: weatherData.humidity,
+      location: weatherData.location,
+      suggestions: weatherSuggestions,
+      fetchedAt: now.toISOString(),
+      queryLocation: location
+    };
+
+    return true;
+  } catch (error) {
+    console.warn('Weather refresh failed:', error.message);
+    return false;
+  }
+}
 
 // Middleware
 app.use(cors({
@@ -227,18 +305,19 @@ app.post('/api/analyze-event', async (req, res) => {
     // Check metadata to see if event has been analyzed
     const isAnalyzedInCache = analysisCache.isAnalyzed(cacheKey);
     
-    // Check cache first to see if this specific event has been analyzed
+    // Attempt to load cached analysis
     let analysis = analysisCache.get(cacheKey);
     let fromCache = false;
     
-    // If event is marked as analyzed in metadata, check cache
-    if (isAnalyzedInCache && analysis) {
-      // Event has been analyzed and analysis is cached
+    if (analysis) {
       fromCache = true;
-      console.log(`📦 Event already analyzed, returning cached analysis: ${cacheKey}`);
-    } else if (isAnalyzedInCache && !analysis) {
-      // Event marked as analyzed but cache expired - allow re-analysis
-      console.log(`⚠️ Event marked as analyzed but cache expired, allowing re-analysis: ${cacheKey}`);
+      if (isAnalyzedInCache) {
+        console.log(`Cached analysis found for event: ${cacheKey}`);
+      } else {
+        console.log(`Cached analysis exists without metadata for event: ${cacheKey}`);
+      }
+    } else if (isAnalyzedInCache) {
+      console.log(`Cached metadata found but analysis expired, re-analyzing event: ${cacheKey}`);
     }
 
     if (!analysis) {
@@ -252,14 +331,19 @@ app.post('/api/analyze-event', async (req, res) => {
 
       // Analyze the event using our AI agent
       analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze);
-      
-      // Store in cache (cache until end of event day)
-      if (eventToAnalyze.date) {
-        analysisCache.set(cacheKey, analysis, eventToAnalyze.date);
-      }
-    } else {
-      fromCache = true;
-      console.log(`📦 Using cached analysis for event: ${cacheKey}`);
+      fromCache = false;
+    }
+
+    // Refresh weather data when needed (handles cached analyses as well)
+    const weatherUpdated = await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
+    if (fromCache && weatherUpdated) {
+      console.log(`Weather data refreshed for cached analysis: ${cacheKey}`);
+    }
+
+    // Store or refresh cache when analysis is new or weather info changed
+    const shouldRefreshCache = !fromCache || weatherUpdated || !isAnalyzedInCache;
+    if (shouldRefreshCache && eventToAnalyze.date) {
+      analysisCache.set(cacheKey, analysis, eventToAnalyze.date);
     }
     
     // Don't mark the event as analyzed yet - wait until tasks are added
@@ -679,6 +763,57 @@ app.post('/api/get-event-title', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch event title',
+      error: error.message
+    });
+  }
+});
+
+// Get weather for an event
+app.post('/api/get-weather', async (req, res) => {
+  try {
+    const { location, eventDate, eventType, eventTitle } = req.body;
+
+    console.log('🌤️ Weather API called:', { location, eventDate, eventType, eventTitle });
+
+    if (!location || !eventDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Location and event date are required'
+      });
+    }
+
+    const weatherData = await weatherService.getWeatherForEvent(location, eventDate);
+
+    console.log('🌤️ Weather service returned:', weatherData);
+
+    if (!weatherData) {
+      console.log('🌤️ No weather data available for this event');
+      return res.json({
+        success: true,
+        weather: null,
+        message: 'Weather data not available for this event'
+      });
+    }
+
+    const suggestions = weatherService.generateWeatherSuggestions(
+      weatherData,
+      eventType,
+      eventTitle
+    );
+
+    res.json({
+      success: true,
+      weather: {
+        ...weatherData,
+        suggestions
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching weather:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch weather data',
       error: error.message
     });
   }

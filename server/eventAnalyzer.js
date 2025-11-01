@@ -132,7 +132,9 @@ class CalendarEventAnalyzer {
           windSpeed: weatherData.windSpeed,
           humidity: weatherData.humidity,
           location: weatherData.location,
-          suggestions: weatherSuggestions
+          suggestions: weatherSuggestions,
+          fetchedAt: new Date().toISOString(),
+          queryLocation: event.location
         };
       }
 

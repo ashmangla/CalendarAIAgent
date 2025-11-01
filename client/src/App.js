@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import './App.css';
 import CalendarEvents from './components/CalendarEvents';
 import logo from './images/Logo.png';
@@ -24,6 +24,27 @@ function App() {
       refreshEventsHandler();
     }
   };
+
+  // Memoize the onUserInfoChange callback to prevent infinite loops
+  const handleUserInfoChange = useCallback((info, connected) => {
+    setUserInfo(info);
+    setIsGoogleConnected(connected);
+  }, []);
+
+  // Memoize the onDisconnectRequest callback
+  const handleDisconnectRequest = useCallback((handler) => {
+    setDisconnectHandler(() => handler);
+  }, []);
+
+  // Memoize the onRefreshEventsRequest callback
+  const handleRefreshEventsRequest = useCallback((handler) => {
+    setRefreshEventsHandler(() => handler);
+  }, []);
+
+  // Memoize the onVoiceAssistantRequest callback
+  const handleVoiceAssistantRequest = useCallback((handler) => {
+    setVoiceAssistantHandler(() => handler);
+  }, []);
 
   const handleVoiceAssistant = () => {
     if (voiceAssistantHandler) {
@@ -142,38 +163,20 @@ function App() {
 
           {activeTab === 'today' && (
             <CalendarEvents
-              onUserInfoChange={(info, connected) => {
-                setUserInfo(info);
-                setIsGoogleConnected(connected);
-              }}
-              onDisconnectRequest={(handler) => {
-                setDisconnectHandler(() => handler);
-              }}
-              onRefreshEventsRequest={(handler) => {
-                setRefreshEventsHandler(() => handler);
-              }}
-              onVoiceAssistantRequest={(handler) => {
-                setVoiceAssistantHandler(() => handler);
-              }}
+              onUserInfoChange={handleUserInfoChange}
+              onDisconnectRequest={handleDisconnectRequest}
+              onRefreshEventsRequest={handleRefreshEventsRequest}
+              onVoiceAssistantRequest={handleVoiceAssistantRequest}
               showTodayOnly={true}
             />
           )}
 
           {activeTab === 'calendar' && (
             <CalendarEvents
-              onUserInfoChange={(info, connected) => {
-                setUserInfo(info);
-                setIsGoogleConnected(connected);
-              }}
-              onDisconnectRequest={(handler) => {
-                setDisconnectHandler(() => handler);
-              }}
-              onRefreshEventsRequest={(handler) => {
-                setRefreshEventsHandler(() => handler);
-              }}
-              onVoiceAssistantRequest={(handler) => {
-                setVoiceAssistantHandler(() => handler);
-              }}
+              onUserInfoChange={handleUserInfoChange}
+              onDisconnectRequest={handleDisconnectRequest}
+              onRefreshEventsRequest={handleRefreshEventsRequest}
+              onVoiceAssistantRequest={handleVoiceAssistantRequest}
             />
           )}
       </div>
