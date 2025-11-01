@@ -246,6 +246,7 @@
   grid-template-columns: minmax(400px, 1fr) minmax(320px, 450px);
   gap: 1.5rem;
   margin-bottom: 2rem;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
@@ -256,7 +257,9 @@
   border-radius: var(--radius-xl);
   padding: 1.5rem;
   box-shadow: 0 4px 6px rgba(30, 58, 138, 0.1);
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -269,7 +272,9 @@
   max-height: calc(100vh - 200px);
   overflow-y: auto;
   overflow-x: hidden;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   box-sizing: border-box;
 }
 
@@ -351,6 +356,9 @@
 
 .calendar-grid {
   width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .calendar-weekdays {
@@ -358,6 +366,9 @@
   grid-template-columns: repeat(7, 1fr);
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .calendar-weekday {
@@ -372,6 +383,9 @@
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 0.5rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .calendar-day {
@@ -379,6 +393,9 @@
   border: 1px solid rgba(30, 58, 138, 0.1);
   border-radius: var(--radius-md);
   padding: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: white;
   transition: all 0.2s ease;
   display: flex;

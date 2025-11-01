@@ -188,10 +188,15 @@ router.post('/events', async (req, res) => {
         
         // Check if this event was created by voice assistant
         const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
-                             event.extendedProperties?.private?.createdByVoice === 'true';
+                             event.extendedProperties?.private?.createdByVoice === 'true' ||
+                             event.extendedProperties?.private?.aiGenerated === 'true';
 
         // Check if this event has been analyzed
         const isAnalyzed = event.extendedProperties?.private?.isAnalyzed === 'true';
+
+        // Check if this is a checklist/generated event
+        const isChecklistEvent = event.extendedProperties?.private?.isChecklistEvent === 'true';
+        const isGeneratedEvent = event.extendedProperties?.private?.isGeneratedEvent === 'true';
 
         // Debug logging for AI-generated events
         if (isAIGenerated) {

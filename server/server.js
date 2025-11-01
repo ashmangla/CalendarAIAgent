@@ -351,10 +351,10 @@ app.get('/api/event-status/:eventId', (req, res) => {
 });
 
 // Add selected AI tasks as calendar events
-app.post('/api/add-ai-tasks', (req, res) => {
+app.post('/api/add-ai-tasks', async (req, res) => {
   try {
     const { selectedTasks, originalEventId } = req.body;
-    
+
     if (!selectedTasks || !Array.isArray(selectedTasks) || selectedTasks.length === 0) {
       return res.status(400).json({
         success: false,
@@ -370,37 +370,127 @@ app.post('/api/add-ai-tasks', (req, res) => {
     }
 
     const addedEvents = [];
-    let nextId = Math.max(...mockCalendarEvents.map(e => parseInt(e.id))) + 1;
+    const tokens = req.session?.tokens;
+    let createdInGoogle = false;
 
-    selectedTasks.forEach(task => {
-      const newEvent = {
-        id: nextId.toString(),
-        title: `📋 ${task.task}`,
-        type: 'ai-preparation',
-        date: task.suggestedDate,
-        endDate: null,
-        description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
-        location: null,
-        isAnalyzed: true, // Generated events are pre-analyzed (they came from an analysis)
-        isChecklistEvent: true, // Mark as checklist event - cannot be analyzed again
-        isGeneratedEvent: true, // Mark as generated event (from analyzed event)
-        aiGenerated: true,
-        originalEventId: originalEventId,
-        taskId: task.id,
-        priority: task.priority,
-        category: task.category,
-        estimatedTime: task.estimatedTime
-      };
+    // If user has Google Calendar tokens, create events in Google Calendar
+    if (tokens && tokens.access_token) {
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(tokens);
 
-      mockCalendarEvents.push(newEvent);
-      addedEvents.push(newEvent);
-      nextId++;
-    });
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+
+        for (const task of selectedTasks) {
+          const startDate = new Date(task.suggestedDate);
+          const duration = 60; // Default 1 hour
+          const endDate = new Date(startDate.getTime() + duration * 60000);
+
+          const formatDateTime = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+          };
+
+          const googleEvent = {
+            summary: `📋 ${task.task}`,
+            description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
+            start: {
+              dateTime: formatDateTime(startDate),
+              timeZone: timeZone
+            },
+            end: {
+              dateTime: formatDateTime(endDate),
+              timeZone: timeZone
+            },
+            extendedProperties: {
+              private: {
+                isChecklistEvent: 'true',
+                isGeneratedEvent: 'true',
+                aiGenerated: 'true',
+                isAIGenerated: 'true',
+                originalEventId: originalEventId,
+                priority: task.priority,
+                category: task.category
+              }
+            }
+          };
+
+          const createdEvent = await calendar.events.insert({
+            calendarId: 'primary',
+            resource: googleEvent
+          });
+
+          addedEvents.push({
+            id: createdEvent.data.id,
+            title: `📋 ${task.task}`,
+            type: 'ai-preparation',
+            date: createdEvent.data.start.dateTime,
+            endDate: createdEvent.data.end.dateTime,
+            description: googleEvent.description,
+            location: null,
+            isAnalyzed: true,
+            isChecklistEvent: true,
+            isGeneratedEvent: true,
+            isAIGenerated: true,
+            source: 'google',
+            originalEventId: originalEventId,
+            priority: task.priority,
+            category: task.category,
+            estimatedTime: task.estimatedTime
+          });
+        }
+
+        createdInGoogle = true;
+        console.log(`✅ Created ${addedEvents.length} AI tasks in Google Calendar`);
+
+      } catch (googleError) {
+        console.error('❌ Error creating tasks in Google Calendar:', googleError.message);
+        // Fall through to create in mock events
+      }
+    }
+
+    // If not created in Google Calendar, add to mock events
+    if (!createdInGoogle) {
+      let nextId = Math.max(...mockCalendarEvents.map(e => parseInt(e.id))) + 1;
+
+      selectedTasks.forEach(task => {
+        const newEvent = {
+          id: nextId.toString(),
+          title: `📋 ${task.task}`,
+          type: 'ai-preparation',
+          date: task.suggestedDate,
+          endDate: null,
+          description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
+          location: null,
+          isAnalyzed: true,
+          isChecklistEvent: true,
+          isGeneratedEvent: true,
+          isAIGenerated: true,
+          originalEventId: originalEventId,
+          taskId: task.id,
+          priority: task.priority,
+          category: task.category,
+          estimatedTime: task.estimatedTime
+        };
+
+        mockCalendarEvents.push(newEvent);
+        addedEvents.push(newEvent);
+        nextId++;
+      });
+    }
 
     res.json({
       success: true,
       addedEvents: addedEvents,
-      message: `Successfully added ${addedEvents.length} AI-generated preparation tasks`
+      createdInGoogle: createdInGoogle,
+      message: `Successfully added ${addedEvents.length} AI-generated preparation tasks${createdInGoogle ? ' to Google Calendar' : ''}`
     });
   } catch (error) {
     console.error('Error adding AI tasks:', error);

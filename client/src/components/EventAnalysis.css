@@ -5,9 +5,11 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   animation: slideIn 0.3s ease-out;
   overflow: hidden;
-  height: fit-content;
+  height: 100%;
   max-width: 100%;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes slideIn {
@@ -26,7 +28,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.875rem 1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
   color: white;
   border-radius: 12px 12px 0 0;
   border-bottom: 1px solid rgba(229, 231, 235, 0.2);
@@ -69,8 +71,11 @@
   padding: 1rem;
   scroll-behavior: smooth;
   overflow-x: hidden;
+  overflow-y: auto;
   max-width: 100%;
   box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Custom scrollbar for better UX */
@@ -155,7 +160,7 @@
 }
 
 .analyze-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -169,7 +174,7 @@
 
 .analyze-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
 }
 
 .loading-analysis {
@@ -307,7 +312,10 @@
   margin-bottom: 1rem;
   max-width: 100%;
   overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 500px;
   box-sizing: border-box;
+  padding-right: 0.5rem;
 }
 
 .task-selection-info {
@@ -668,7 +676,7 @@
 }
 
 .add-tasks-btn {
-  background: linear-gradient(135deg, #10b981 0%, #667eea 100%);
+  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -689,8 +697,8 @@
 
 .add-tasks-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-  background: linear-gradient(135deg, #059669 0%, #5b21b6 100%);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+  background: linear-gradient(135deg, #7c3aed 0%, #db2777 50%, #ea580c 100%);
 }
 
 .add-tasks-btn:disabled {
@@ -778,15 +786,19 @@
 
 .analysis-actions {
   text-align: center;
-  padding-top: 0.75rem;
+  padding: 0.75rem 1rem;
   border-top: 1px solid #e2e8f0;
-  margin-top: 1rem;
+  background: white;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .reanalyze-btn {
   background: transparent;
-  color: #667eea;
-  border: 1px solid #667eea;
+  color: #8B5CF6;
+  border: 1px solid #8B5CF6;
   padding: 0.5rem 1rem;
   border-radius: 6px;
   cursor: pointer;
@@ -802,10 +814,11 @@
 }
 
 .reanalyze-btn:hover:not(:disabled) {
-  background: #667eea;
+  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
   color: white;
+  border-color: transparent;
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.25);
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.4);
 }
 
 .reanalyze-btn:disabled {
