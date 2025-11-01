@@ -485,7 +485,8 @@
 }
 
 .analyzed-badge-small,
-.checklist-badge-small {
+.checklist-badge-small,
+.ai-badge-small {
   font-size: 0.625rem;
   font-weight: bold;
   margin-left: auto;
@@ -493,6 +494,11 @@
   border-radius: 3px;
   flex-shrink: 0;
   line-height: 1;
+}
+
+.ai-badge-small {
+  background: rgba(139, 92, 246, 0.2);
+  color: #7c3aed;
 }
 
 .analyzed-badge-small {
@@ -507,6 +513,15 @@
 
 .calendar-event-item.recurring .event-dot {
   background: #10b981;
+}
+
+.calendar-event-item.ai-generated-item {
+  border-left-color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.05);
+}
+
+.calendar-event-item.ai-generated-item .event-dot {
+  background: #8b5cf6;
 }
 
 .event-title-short {
@@ -699,6 +714,16 @@
   transform: translateY(-4px);
   box-shadow: var(--shadow-xl);
   border-color: var(--primary-color);
+}
+
+.event-card.non-clickable {
+  opacity: 0.7;
+}
+
+.event-card.non-clickable:hover {
+  transform: none;
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-color);
 }
 
 .event-badges {
@@ -926,7 +951,7 @@
 }
 
 .ai-badge {
-  background: linear-gradient(135deg, var(--error-color) 0%, #dc2626 100%);
+  background: linear-gradient(135deg, #8B5CF6 0%, #7c3aed 100%);
   color: white;
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm);
@@ -954,8 +979,8 @@
 }
 
 .event-card.ai-generated {
-  border-left: 4px solid #ff6b6b;
-  background: linear-gradient(135deg, #fff5f5 0%, #ffe8e8 100%);
+  border-left: 4px solid #8b5cf6;
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
 }
 
 .event-card.ai-generated .event-title {

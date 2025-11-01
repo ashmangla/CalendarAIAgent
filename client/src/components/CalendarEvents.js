@@ -367,6 +367,16 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   };
 
   const handleAnalyzeEvent = (event) => {
+    // Don't allow analyzing AI-generated events
+    if (event.isAIGenerated) {
+      return;
+    }
+
+    // Don't allow re-analyzing already analyzed events
+    if (event.isAnalyzed) {
+      return;
+    }
+
     // Only allow analyzing future or today's events
     if (!isPastEvent(event)) {
       setSelectedEvent(event);
@@ -397,10 +407,12 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   }, [selectedEvent]);
 
   const handleVoiceEventAdded = useCallback((newEvent) => {
-    // Add the new event to the events list
+    // Add the new event to the events list immediately for instant feedback
     setEvents(prevEvents => [...prevEvents, newEvent]);
-    // Refresh events to get updated list
-    fetchEvents();
+    // Refresh events after a short delay to get updated list from Google Calendar
+    setTimeout(() => {
+      fetchEvents();
+    }, 1000);
   }, [fetchEvents]);
 
   const handleTasksAdded = (addedEvents) => {
@@ -461,9 +473,6 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
           Found {displayEvents.length} {showTodayOnly ? "event(s) today" : "upcoming events"}
           {isGoogleConnected ? ' from Google Calendar' : ' (sample data)'}
         </div>
-        <button className="refresh-btn" onClick={fetchEvents}>
-          Refresh Events
-        </button>
       </div>
 
       {!showAuthModal && showVoiceAssistant && (
@@ -486,18 +495,35 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
               </div>
             ) : (
               <div className="events-grid">
-                {displayEvents.map((event) => (
+                {displayEvents.map((event) => {
+                  const canAnalyze = !event.isAIGenerated && !event.isAnalyzed && !isPastEvent(event);
+                  const getTitle = () => {
+                    if (event.isAIGenerated) return `${event.title} (AI-generated events cannot be analyzed)`;
+                    if (event.isAnalyzed) return `${event.title} (Already analyzed)`;
+                    if (isPastEvent(event)) return `${event.title} (Cannot analyze past events)`;
+                    return event.title;
+                  };
+
+                  return (
                   <div
                     key={event.id}
-                    className={`event-card ${getEventTypeClass(event.type)} ${event.isAnalyzed ? 'analyzed' : ''}`}
+                    className={`event-card ${getEventTypeClass(event.type)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canAnalyze ? 'non-clickable' : ''}`}
                     onClick={() => handleAnalyzeEvent(event)}
+                    title={getTitle()}
+                    style={{ cursor: canAnalyze ? 'pointer' : 'default' }}
                   >
-                    <div className="event-card-header">
-                      <h3 className="event-title">{event.title}</h3>
-                      <span className={`event-type-badge ${getEventTypeClass(event.type)}`}>
+                    <div className="event-badges">
+                      {event.isAIGenerated && (
+                        <span className="ai-badge" title="AI-generated event">🤖 AI</span>
+                      )}
+                      {event.isAnalyzed && (
+                        <span className="analyzed-badge" title="Event has been analyzed">✓ Analyzed</span>
+                      )}
+                      <span className={`event-type ${getEventTypeClass(event.type)}`}>
                         {event.type}
                       </span>
                     </div>
+                    <h3 className="event-title">{event.title}</h3>
                     <div className="event-card-body">
                       <p className="event-time">
                         {new Date(event.date).toLocaleTimeString('en-US', {
@@ -512,11 +538,9 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                         <p className="event-description">{event.description}</p>
                       )}
                     </div>
-                    {event.isAnalyzed && (
-                      <div className="analyzed-badge">✓ Analyzed</div>
-                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -561,15 +585,28 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                     <>
                       <div className="calendar-day-number">{date.getDate()}</div>
                       <div className="calendar-day-events">
-                        {getEventsForDate(date).map((event) => (
+                        {getEventsForDate(date).map((event) => {
+                          const canAnalyze = !event.isAIGenerated && !event.isAnalyzed && !isPastEvent(event);
+                          const getTitle = () => {
+                            if (event.isAIGenerated) return `${event.title} (AI-generated events cannot be analyzed)`;
+                            if (event.isAnalyzed) return `${event.title} (Already analyzed)`;
+                            if (isPastEvent(event)) return `${event.title} (Cannot analyze past events)`;
+                            return event.title;
+                          };
+
+                          return (
                           <div
                             key={event.id}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
                             onClick={() => handleAnalyzeEvent(event)}
-                            title={isPastEvent(event) ? `${event.title} (Cannot analyze past events)` : event.title}
+                            title={getTitle()}
+                            style={{ cursor: canAnalyze ? 'pointer' : 'default' }}
                           >
                             <span className="event-dot"></span>
                             <span className="event-title-short">{event.title}</span>
+                            {event.isAIGenerated && (
+                              <span className="ai-badge-small" title="AI-generated event">🤖</span>
+                            )}
                             {event.isAnalyzed && !event.isChecklistEvent && !event.isGeneratedEvent && (
                               <span className="analyzed-badge-small" title="Event has been analyzed">✓</span>
                             )}
@@ -578,7 +615,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                             )}
                             {event.isRecurring && <span className="recurring-icon">🔄</span>}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </>
                   )}

@@ -262,7 +262,12 @@ router.post('/check-conflict', async (req, res) => {
  */
 router.post('/create-event', async (req, res) => {
   try {
-    const { eventDetails, tokens, override = false } = req.body;
+    const { eventDetails, override = false } = req.body;
+    // Use tokens from session instead of request body for security
+    const tokens = req.session?.tokens || req.body.tokens;
+
+    console.log(`📅 Creating voice event: ${eventDetails?.title}`);
+    console.log(`🔑 Tokens available: ${!!tokens}, From session: ${!!req.session?.tokens}`);
 
     if (!eventDetails || !eventDetails.title || !eventDetails.date || !eventDetails.time) {
       return res.status(400).json({
@@ -342,7 +347,7 @@ router.post('/create-event', async (req, res) => {
       type: _determineEventType(eventDetails.title),
       source: tokens ? 'google' : 'voice',
       isAnalyzed: false,
-      aiGenerated: false
+      isAIGenerated: true
     };
 
     let eventCreatedInGoogle = false;
@@ -383,6 +388,12 @@ router.post('/create-event', async (req, res) => {
           end: {
             dateTime: formatDateTime(endDate, timeZone),
             timeZone: timeZone
+          },
+          extendedProperties: {
+            private: {
+              isAIGenerated: 'true',
+              createdByVoice: 'true'
+            }
           }
         };
         
@@ -396,15 +407,17 @@ router.post('/create-event', async (req, res) => {
           calendarId: 'primary',
           resource: googleEvent
         });
-        
+
         // Update event with Google Calendar data
         event.id = createdEvent.data.id;
         event.date = createdEvent.data.start.dateTime || createdEvent.data.start.date;
         event.endDate = createdEvent.data.end.dateTime || createdEvent.data.end.date;
         event.source = 'google';
+        event.isAIGenerated = true; // Ensure this is set on the returned event
         eventCreatedInGoogle = true;
-        
+
         console.log(`✅ Created event in Google Calendar: ${event.title} (ID: ${event.id})`);
+        console.log(`🤖 AI-generated flag set: ${event.isAIGenerated}`);
       } catch (googleError) {
         console.error('❌ Error creating Google Calendar event:', googleError);
         console.error('Error details:', {

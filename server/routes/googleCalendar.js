@@ -23,7 +23,7 @@ router.get('/auth-url', (req, res) => {
     const oauth2Client = initOAuth2Client();
     
     const scopes = [
-      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile'
     ];
@@ -186,6 +186,23 @@ router.post('/events', async (req, res) => {
           type = 'work';
         }
         
+        // Check if this event was created by voice assistant
+        const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
+                             event.extendedProperties?.private?.createdByVoice === 'true';
+
+        // Check if this event has been analyzed
+        const isAnalyzed = event.extendedProperties?.private?.isAnalyzed === 'true';
+
+        // Debug logging for AI-generated events
+        if (isAIGenerated) {
+          console.log(`🤖 Found AI-generated event: ${title} (Extended props: ${JSON.stringify(event.extendedProperties)})`);
+        }
+
+        // Debug logging for analyzed events
+        if (isAnalyzed) {
+          console.log(`✓ Found analyzed event: ${title}`);
+        }
+
         return {
           id: event.id || `google-${Date.now()}-${Math.random()}`,
           title: title,
@@ -194,8 +211,8 @@ router.post('/events', async (req, res) => {
           endDate: end,
           description: description,
           location: event.location || '',
-          isAnalyzed: false,
-          aiGenerated: false,
+          isAnalyzed: isAnalyzed,
+          isAIGenerated: isAIGenerated,
           source: 'google',
           attendees: event.attendees ? event.attendees.length : 0,
           allDay: !event.start?.dateTime, // true if only date is provided

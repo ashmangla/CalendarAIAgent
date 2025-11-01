@@ -266,13 +266,43 @@ app.post('/api/analyze-event', async (req, res) => {
     if (!event && eventToAnalyze) {
       eventToAnalyze.isAnalyzed = true;
     }
-    
+
+    // If this is a Google Calendar event and user has tokens, update the event in Google Calendar
+    if (event && event.source === 'google' && req.session && req.session.tokens) {
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(req.session.tokens);
+
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+        // Update the event with isAnalyzed extended property
+        await calendar.events.patch({
+          calendarId: 'primary',
+          eventId: event.id,
+          resource: {
+            extendedProperties: {
+              private: {
+                isAnalyzed: 'true',
+                analyzedAt: new Date().toISOString()
+              }
+            }
+          }
+        });
+
+        console.log(`✅ Marked event as analyzed in Google Calendar: ${event.title} (ID: ${event.id})`);
+      } catch (googleError) {
+        console.error('⚠️ Failed to update Google Calendar event:', googleError.message);
+        // Don't fail the request if Google Calendar update fails
+      }
+    }
+
     // Get metadata for the event
     const metadata = analysisCache.getMetadata(cacheKey);
-    
+
     res.json({
       success: true,
-      event: eventToAnalyze,
+      event: { ...eventToAnalyze, isAnalyzed: true },
       analysis: analysis,
       fromCache: fromCache,
       metadata: metadata || { isAnalyzed: true, analyzedAt: new Date() },
