@@ -51,19 +51,41 @@ router.get('/auth-url', (req, res) => {
 router.get('/callback', async (req, res) => {
   try {
     const { code } = req.query;
-    
+
     if (!code) {
       return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?error=no_code`);
     }
-    
+
     const oauth2Client = initOAuth2Client();
-    
+
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
-    
-    // Store tokens (in production, use a proper database)
-    // For now, we'll pass tokens to the client
-    res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?tokens=${encodeURIComponent(JSON.stringify(tokens))}`);
+
+    // Get user info
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfoResponse = await oauth2.userinfo.get();
+    const userInfo = userInfoResponse.data;
+
+    // Store tokens and user info in session (expires in 3 days)
+    req.session.tokens = tokens;
+    req.session.userInfo = {
+      id: userInfo.id,
+      email: userInfo.email,
+      name: userInfo.name,
+      picture: userInfo.picture,
+      verified_email: userInfo.verified_email
+    };
+
+    // Save session and redirect
+    req.session.save((err) => {
+      if (err) {
+        console.error('Error saving session:', err);
+        return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?error=session_failed`);
+      }
+
+      // Redirect back to client with success indicator
+      res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?auth=success`);
+    });
   } catch (error) {
     console.error('Error in OAuth callback:', error);
     res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?error=auth_failed`);
@@ -268,25 +290,94 @@ router.post('/revoke', async (req, res) => {
 router.post('/refresh-token', async (req, res) => {
   try {
     const { tokens } = req.body;
-    
+
     if (!tokens || !tokens.refresh_token) {
       return res.status(400).json({
         success: false,
         error: 'No refresh token provided'
       });
     }
-    
+
     const oauth2Client = initOAuth2Client();
     oauth2Client.setCredentials(tokens);
-    
+
     const newTokens = await oauth2Client.refreshAccessToken();
-    
+
+    // Update session with new tokens
+    if (req.session) {
+      req.session.tokens = newTokens.credentials;
+    }
+
     res.json({
       success: true,
       tokens: newTokens.credentials
     });
   } catch (error) {
     console.error('Error refreshing token:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Check session status
+router.get('/session', (req, res) => {
+  try {
+    if (req.session && req.session.tokens && req.session.userInfo) {
+      res.json({
+        success: true,
+        isAuthenticated: true,
+        userInfo: req.session.userInfo,
+        tokens: req.session.tokens
+      });
+    } else {
+      res.json({
+        success: true,
+        isAuthenticated: false
+      });
+    }
+  } catch (error) {
+    console.error('Error checking session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Logout and destroy session
+router.post('/logout', async (req, res) => {
+  try {
+    // Revoke tokens if available
+    if (req.session && req.session.tokens) {
+      try {
+        const oauth2Client = initOAuth2Client();
+        oauth2Client.setCredentials(req.session.tokens);
+        await oauth2Client.revokeToken(req.session.tokens.access_token);
+      } catch (error) {
+        console.warn('Failed to revoke tokens:', error);
+      }
+    }
+
+    // Destroy session
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('Error destroying session:', err);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to logout'
+        });
+      }
+
+      res.clearCookie('connect.sid');
+      res.json({
+        success: true,
+        message: 'Logged out successfully'
+      });
+    });
+  } catch (error) {
+    console.error('Error logging out:', error);
     res.status(500).json({
       success: false,
       error: error.message

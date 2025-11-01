@@ -4,7 +4,7 @@ import EventAnalysis from './EventAnalysis';
 import GoogleAuth from './GoogleAuth';
 import VoiceAssistant from './VoiceAssistant';
 
-const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
+const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEventsRequest, onVoiceAssistantRequest, showTodayOnly = false }) => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -14,6 +14,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
   const [userInfo, setUserInfo] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
 
   // Notify parent component of user info changes
   useEffect(() => {
@@ -83,26 +84,19 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
   // Handle disconnect from Google
   const handleDisconnectGoogle = useCallback(async () => {
     try {
-      // Revoke Google tokens if available
-      if (userInfo && userInfo.tokens) {
-        try {
-          await axios.post('/api/google-calendar/revoke', {
-            tokens: userInfo.tokens
-          });
-        } catch (error) {
-          console.warn('Failed to revoke tokens:', error);
-          // Continue with disconnect even if revocation fails
-        }
-      }
-      
+      // Call logout endpoint to destroy session and revoke tokens
+      await axios.post('/api/google-calendar/logout', {}, {
+        withCredentials: true
+      });
+
       // Clear local state
       setIsGoogleConnected(false);
       setUserInfo(null);
       setShowAuthModal(true); // Show auth modal again
-      
+
       // Clean URL parameters
       window.history.replaceState({}, document.title, window.location.pathname);
-      
+
       console.log('Disconnected from Google Calendar');
     } catch (error) {
       console.error('Error disconnecting from Google:', error);
@@ -111,7 +105,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
       setUserInfo(null);
       setShowAuthModal(true);
     }
-  }, [userInfo]);
+  }, []);
 
   // Expose disconnect handler to parent
   useEffect(() => {
@@ -120,49 +114,94 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
     }
   }, [onDisconnectRequest, handleDisconnectGoogle]);
 
-  // Handle OAuth callback with tokens in URL
+  // Expose refresh events handler to parent
+  useEffect(() => {
+    if (onRefreshEventsRequest) {
+      onRefreshEventsRequest(fetchEvents);
+    }
+  }, [onRefreshEventsRequest, fetchEvents]);
+
+  // Expose voice assistant toggle handler to parent
+  useEffect(() => {
+    if (onVoiceAssistantRequest) {
+      onVoiceAssistantRequest(() => setShowVoiceAssistant(prev => !prev));
+    }
+  }, [onVoiceAssistantRequest]);
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      console.log('Checking for existing session...');
+      try {
+        const response = await axios.get('/api/google-calendar/session', {
+          withCredentials: true
+        });
+
+        if (response.data.success && response.data.isAuthenticated) {
+          console.log('Found existing session:', response.data.userInfo);
+          setUserInfo({
+            email: response.data.userInfo.email,
+            name: response.data.userInfo.name,
+            imageUrl: response.data.userInfo.picture,
+            tokens: response.data.tokens
+          });
+          setIsGoogleConnected(true);
+          setShowAuthModal(false);
+        } else {
+          console.log('No existing session found');
+        }
+      } catch (error) {
+        console.error('Error checking session:', error);
+      }
+    };
+
+    checkSession();
+  }, []);
+
+  // Handle OAuth callback
   useEffect(() => {
     console.log('Checking for OAuth callback in URL:', window.location.href);
     const urlParams = new URLSearchParams(window.location.search);
-    const tokensParam = urlParams.get('tokens');
+    const authParam = urlParams.get('auth');
     const errorParam = urlParams.get('error');
-    
-    console.log('URL params - tokens:', tokensParam ? 'present' : 'missing', 'error:', errorParam);
-    
+
+    console.log('URL params - auth:', authParam, 'error:', errorParam);
+
     if (errorParam) {
       console.error('OAuth error:', errorParam);
       setError('Authentication failed. Please try again or use sample data.');
       setShowAuthModal(false);
       // Clean URL
       window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (tokensParam) {
-      try {
-        console.log('Parsing tokens...');
-        const tokens = JSON.parse(decodeURIComponent(tokensParam));
-        console.log('OAuth tokens received:', tokens);
-        
-        // Set user info with tokens (we'll fetch real user info after)
-        setUserInfo({
-          email: 'Loading...',
-          name: 'Loading...',
-          imageUrl: 'https://lh3.googleusercontent.com/a/default-user-icon',
-          tokens: tokens
-        });
-        setIsGoogleConnected(true);
-        setShowAuthModal(false);
-        
-        // Clean URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-        console.log('OAuth setup complete, fetching user info...');
-        
-        // Fetch real user information
-        fetchUserInfo(tokens);
-      } catch (error) {
-        console.error('Error parsing OAuth tokens:', error);
-        setError('Failed to authenticate with Google');
-      }
+    } else if (authParam === 'success') {
+      console.log('Auth success, fetching session...');
+
+      // Fetch session data from server
+      axios.get('/api/google-calendar/session', {
+        withCredentials: true
+      })
+      .then(response => {
+        if (response.data.success && response.data.isAuthenticated) {
+          console.log('Session data received:', response.data.userInfo);
+          setUserInfo({
+            email: response.data.userInfo.email,
+            name: response.data.userInfo.name,
+            imageUrl: response.data.userInfo.picture,
+            tokens: response.data.tokens
+          });
+          setIsGoogleConnected(true);
+          setShowAuthModal(false);
+
+          // Clean URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching session after auth:', error);
+        setError('Failed to complete authentication');
+      });
     } else {
-      console.log('No tokens or error in URL, showing auth modal');
+      console.log('No auth callback in URL');
     }
   }, []);
 
@@ -409,14 +448,17 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
     );
   }
 
+  // Filter events for today if showTodayOnly is true
+  const displayEvents = showTodayOnly ? events.filter(event => isToday(new Date(event.date))) : events;
+
   return (
     <div className="calendar-container">
       <div className="calendar-header">
         <div className="calendar-title-section">
-          <h2>Your Calendar Events</h2>
+          <h2>{showTodayOnly ? "Today's Events" : "Your Calendar Events"}</h2>
         </div>
         <div className="events-count">
-          Found {events.length} upcoming events
+          Found {displayEvents.length} {showTodayOnly ? "event(s) today" : "upcoming events"}
           {isGoogleConnected ? ' from Google Calendar' : ' (sample data)'}
         </div>
         <button className="refresh-btn" onClick={fetchEvents}>
@@ -424,7 +466,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
         </button>
       </div>
 
-      {!showAuthModal && (
+      {!showAuthModal && showVoiceAssistant && (
         <VoiceAssistant
           onEventAdded={handleVoiceEventAdded}
           userInfo={userInfo}
@@ -433,26 +475,73 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
       )}
       
       <div className="calendar-content">
-        <div className="calendar-with-details">
-          <div className="calendar-grid-container">
-            <div className="calendar-grid-header">
-            <button 
-              className="month-nav-btn" 
-              onClick={handlePreviousMonth}
-              aria-label="Previous month"
-            >
-              ‹
-            </button>
-            <h3>{getMonthYearLabel()}</h3>
-            <button 
-              className="month-nav-btn" 
-              onClick={handleNextMonth}
-              aria-label="Next month"
-            >
-              ›
-            </button>
+        {showTodayOnly ? (
+          // Today's Events List View
+          <div className="today-events-list">
+            {displayEvents.length === 0 ? (
+              <div className="no-events-message">
+                <div className="no-events-icon">📅</div>
+                <h3>No events scheduled for today</h3>
+                <p>Enjoy your free day or add new events to your calendar!</p>
+              </div>
+            ) : (
+              <div className="events-grid">
+                {displayEvents.map((event) => (
+                  <div
+                    key={event.id}
+                    className={`event-card ${getEventTypeClass(event.type)} ${event.isAnalyzed ? 'analyzed' : ''}`}
+                    onClick={() => handleAnalyzeEvent(event)}
+                  >
+                    <div className="event-card-header">
+                      <h3 className="event-title">{event.title}</h3>
+                      <span className={`event-type-badge ${getEventTypeClass(event.type)}`}>
+                        {event.type}
+                      </span>
+                    </div>
+                    <div className="event-card-body">
+                      <p className="event-time">
+                        {new Date(event.date).toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                      {event.location && (
+                        <p className="event-location">📍 {event.location}</p>
+                      )}
+                      {event.description && (
+                        <p className="event-description">{event.description}</p>
+                      )}
+                    </div>
+                    {event.isAnalyzed && (
+                      <div className="analyzed-badge">✓ Analyzed</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="calendar-grid">
+        ) : (
+          // Regular Calendar Grid View
+          <div className="calendar-with-details">
+            <div className="calendar-grid-container">
+              <div className="calendar-grid-header">
+              <button
+                className="month-nav-btn"
+                onClick={handlePreviousMonth}
+                aria-label="Previous month"
+              >
+                ‹
+              </button>
+              <h3>{getMonthYearLabel()}</h3>
+              <button
+                className="month-nav-btn"
+                onClick={handleNextMonth}
+                aria-label="Next month"
+              >
+                ›
+              </button>
+            </div>
+            <div className="calendar-grid">
             <div className="calendar-weekdays">
               <div className="calendar-weekday">Sun</div>
               <div className="calendar-weekday">Mon</div>
@@ -498,27 +587,28 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest }) => {
             </div>
           </div>
         </div>
-        
-        {showAnalysis && selectedEvent && (
-          <div className="event-details-panel">
-            <EventAnalysis 
-              event={selectedEvent} 
-              onClose={closeAnalysis}
-              onTasksAdded={handleTasksAdded}
-              onEventAnalyzed={handleEventAnalyzed}
-            />
+
+            {showAnalysis && selectedEvent && (
+              <div className="event-details-panel">
+                <EventAnalysis
+                  event={selectedEvent}
+                  onClose={closeAnalysis}
+                  onTasksAdded={handleTasksAdded}
+                  onEventAnalyzed={handleEventAnalyzed}
+                />
+              </div>
+            )}
+            {!showAnalysis && (
+              <div className="event-details-placeholder">
+                <div className="placeholder-content">
+                  <div className="placeholder-icon">📅</div>
+                  <h3>Click an event to view details</h3>
+                  <p>Select any event from the calendar to see full details and analysis options</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
-        {!showAnalysis && (
-          <div className="event-details-placeholder">
-            <div className="placeholder-content">
-              <div className="placeholder-icon">📅</div>
-              <h3>Click an event to view details</h3>
-              <p>Select any event from the calendar to see full details and analysis options</p>
-            </div>
-          </div>
-        )}
-        </div>
       </div>
     </div>
   );

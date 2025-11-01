@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import './App.css';
 import CalendarEvents from './components/CalendarEvents';
+import logo from './images/Logo.png';
 
 function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [userInfo, setUserInfo] = useState(null);
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [disconnectHandler, setDisconnectHandler] = useState(null);
+  const [refreshEventsHandler, setRefreshEventsHandler] = useState(null);
+  const [voiceAssistantHandler, setVoiceAssistantHandler] = useState(null);
 
   const handleDisconnect = () => {
     if (disconnectHandler) {
@@ -16,45 +19,86 @@ function App() {
     setIsGoogleConnected(false);
   };
 
+  const handleRefreshEvents = () => {
+    if (refreshEventsHandler) {
+      refreshEventsHandler();
+    }
+  };
+
+  const handleVoiceAssistant = () => {
+    if (voiceAssistantHandler) {
+      voiceAssistantHandler();
+    }
+  };
+
   return (
     <div className="App">
       <header className="App-header">
         <div className="header-top">
-          <h1 className="app-title">MotherBoard</h1>
-          {isGoogleConnected && userInfo && (
-            <div className="google-user-info-header">
-              <img 
-                src={userInfo.imageUrl} 
-                alt={userInfo.name} 
-                className="user-avatar-header"
-              />
-              <div className="user-details-header">
-                <span className="user-name-header">{userInfo.name}</span>
-                <span className="user-email-header">{userInfo.email}</span>
+          <h1 className="app-title">
+            <img src={logo} alt="MotherBoard Logo" className="app-logo" />
+            MotherBoard
+          </h1>
+          <div className="header-actions">
+            {(activeTab === 'calendar' || activeTab === 'today') && (
+              <>
+                <button
+                  className="header-action-btn"
+                  onClick={handleRefreshEvents}
+                  title="Refresh Events"
+                >
+                  🔄 Refresh
+                </button>
+                <button
+                  className="header-action-btn voice-btn"
+                  onClick={handleVoiceAssistant}
+                  title="Voice Assistant"
+                >
+                  🎤 Voice
+                </button>
+              </>
+            )}
+            {isGoogleConnected && userInfo && (
+              <div className="google-user-info-header">
+                <img
+                  src={userInfo.imageUrl}
+                  alt={userInfo.name}
+                  className="user-avatar-header"
+                />
+                <div className="user-details-header">
+                  <span className="user-name-header">{userInfo.name}</span>
+                  <span className="user-email-header">{userInfo.email}</span>
+                </div>
+                <button
+                  className="disconnect-btn-header"
+                  onClick={handleDisconnect}
+                  title="Disconnect from Google Calendar"
+                >
+                  Sign Out
+                </button>
               </div>
-              <button 
-                className="disconnect-btn-header"
-                onClick={handleDisconnect}
-                title="Disconnect from Google Calendar"
-              >
-                Sign Out
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
         
         <nav className="app-nav">
-          <button 
+          <button
             className={`nav-btn ${activeTab === 'home' ? 'active' : ''}`}
             onClick={() => setActiveTab('home')}
           >
             Home
           </button>
-          <button 
+          <button
+            className={`nav-btn ${activeTab === 'today' ? 'active' : ''}`}
+            onClick={() => setActiveTab('today')}
+          >
+            Today's Events
+          </button>
+          <button
             className={`nav-btn ${activeTab === 'calendar' ? 'active' : ''}`}
             onClick={() => setActiveTab('calendar')}
           >
-            My Calendar
+            Analyze Events
           </button>
         </nav>
       </header>
@@ -64,15 +108,17 @@ function App() {
             <div className="welcome-section">
               <h2>Welcome to MotherBoard</h2>
               <p className="welcome-subtitle">Your intelligent calendar assistant that helps you prepare for events, manage your schedule, and book transportation seamlessly.</p>
-              
-              <div className="cta-section">
-                <button 
-                  className="cta-button"
-                  onClick={() => setActiveTab('calendar')}
-                >
-                  Get Started
-                </button>
-              </div>
+
+              {!isGoogleConnected && (
+                <div className="cta-section">
+                  <button
+                    className="cta-button"
+                    onClick={() => setActiveTab('calendar')}
+                  >
+                    Get Started
+                  </button>
+                </div>
+              )}
 
               <div className="features">
                 <div className="feature-card">
@@ -93,15 +139,40 @@ function App() {
               </div>
             </div>
           )}
-          
-          {activeTab === 'calendar' && (
-            <CalendarEvents 
+
+          {activeTab === 'today' && (
+            <CalendarEvents
               onUserInfoChange={(info, connected) => {
                 setUserInfo(info);
                 setIsGoogleConnected(connected);
               }}
               onDisconnectRequest={(handler) => {
                 setDisconnectHandler(() => handler);
+              }}
+              onRefreshEventsRequest={(handler) => {
+                setRefreshEventsHandler(() => handler);
+              }}
+              onVoiceAssistantRequest={(handler) => {
+                setVoiceAssistantHandler(() => handler);
+              }}
+              showTodayOnly={true}
+            />
+          )}
+
+          {activeTab === 'calendar' && (
+            <CalendarEvents
+              onUserInfoChange={(info, connected) => {
+                setUserInfo(info);
+                setIsGoogleConnected(connected);
+              }}
+              onDisconnectRequest={(handler) => {
+                setDisconnectHandler(() => handler);
+              }}
+              onRefreshEventsRequest={(handler) => {
+                setRefreshEventsHandler(() => handler);
+              }}
+              onVoiceAssistantRequest={(handler) => {
+                setVoiceAssistantHandler(() => handler);
               }}
             />
           )}

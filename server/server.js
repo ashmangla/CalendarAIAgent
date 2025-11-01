@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const session = require('express-session');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
 const analysisCache = require('./services/analysisCache');
 const eventsStore = require('./services/eventsStore');
@@ -22,8 +24,23 @@ try {
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'motherboard-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days in milliseconds
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  }
+}));
 
 // Mock calendar events data (with analysis tracking)
 let mockCalendarEvents = [
