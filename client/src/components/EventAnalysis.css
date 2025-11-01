@@ -6,6 +6,8 @@
   animation: slideIn 0.3s ease-out;
   overflow: hidden;
   height: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 @keyframes slideIn {
@@ -66,6 +68,9 @@
 .analysis-content {
   padding: 1rem;
   scroll-behavior: smooth;
+  overflow-x: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Custom scrollbar for better UX */
@@ -297,9 +302,12 @@
 
 .tasks-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 1rem;
   margin-bottom: 1rem;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .task-selection-info {
@@ -316,6 +324,10 @@
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  box-sizing: border-box;
 }
 
 .task-card:hover {
@@ -808,43 +820,54 @@
   .analysis-overlay {
     padding: 1rem;
   }
-  
+
   .analysis-modal {
     max-height: 95vh;
   }
-  
+
   .analysis-header {
     padding: 1.25rem 1.5rem;
   }
-  
+
   .analysis-header h2 {
     font-size: 1.25rem;
   }
-  
+
   .analysis-content {
-    padding: 1.5rem;
+    padding: 1rem;
+    overflow-x: hidden;
   }
-  
+
   .tasks-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
   }
-  
+
   .event-meta {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
   }
-  
+
   .action-buttons {
     flex-direction: column;
     gap: 0.75rem;
   }
-  
+
   .add-tasks-btn,
   .reanalyze-btn {
     min-width: auto;
     width: 100%;
+  }
+
+  .event-info,
+  .analysis-summary,
+  .preparation-tasks,
+  .timeline-section,
+  .tips-section {
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
   }
 }
 

@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npm start)",
+      "Bash(timeout /t 15 /nobreak)",
+      "Bash(nul)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(timeout /t 20 /nobreak)",
+      "Bash(set PORT=3000)",
+      "Bash(timeout /t 25 /nobreak)",
+      "Bash(timeout /t 30 /nobreak)",
+      "Bash(cmd /c \"cd client && set PORT=3000&& npm start\")",
+      "Bash(dir:*)",
+      "Bash(./start-client.bat)",
+      "Bash(timeout /t 40 /nobreak)",
+      "Bash(timeout /t 60 /nobreak)",
+      "Bash(timeout /t 45 /nobreak)",
+      "Bash(tasklist:*)",
+      "Bash(timeout /t 10 /nobreak)",
+      "Bash(npm install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
