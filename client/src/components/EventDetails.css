@@ -417,3 +417,22 @@
   margin: 0;
   font-style: italic;
 }
+
+/* Original Event Link */
+.original-event-link {
+  display: inline-block;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  border: 1px solid #e9d5ff;
+  border-left: 3px solid #8b5cf6;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  color: #1e293b;
+  line-height: 1.4;
+}
+
+.original-event-link strong {
+  color: #8b5cf6;
+  font-weight: 600;
+}

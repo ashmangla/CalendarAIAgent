@@ -534,7 +534,41 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                         <p className="event-location">📍 {event.location}</p>
                       )}
                       {event.description && (
-                        <p className="event-description">{event.description}</p>
+                        <p className="event-description">
+                          {(() => {
+                            // Check if this is an AI-generated task with an original event reference
+                            if (event.isAIGenerated || event.isChecklistEvent) {
+                              // Parse description to remove the first line about the original event
+                              const matchQuoted = event.description.match(/AI-generated preparation task for "(.+?)"\.\n\n/);
+                              const matchEventId = event.description.match(/AI-generated preparation task for event ID .+?\.\n\n/);
+
+                              if (matchQuoted || matchEventId) {
+                                let restOfDescription = event.description;
+                                let originalTitle;
+
+                                if (matchQuoted) {
+                                  // Use stored originalEventTitle, otherwise extract from description
+                                  originalTitle = event.originalEventTitle || matchQuoted[1];
+                                  restOfDescription = event.description.replace(/AI-generated preparation task for "(.+?)"\.\n\n/, '');
+                                } else if (matchEventId) {
+                                  // Use stored originalEventTitle, otherwise use fallback
+                                  originalTitle = event.originalEventTitle || 'the event';
+                                  restOfDescription = event.description.replace(/AI-generated preparation task for event ID .+?\.\n\n/, '');
+                                }
+
+                                return (
+                                  <>
+                                    <strong style={{ color: '#8b5cf6', fontSize: '0.75rem', display: 'block', marginBottom: '0.5rem' }}>
+                                      Prep for: {originalTitle}
+                                    </strong>
+                                    {restOfDescription}
+                                  </>
+                                );
+                              }
+                            }
+                            return event.description;
+                          })()}
+                        </p>
                       )}
                     </div>
                   </div>

@@ -218,6 +218,10 @@ router.post('/events', async (req, res) => {
           location: event.location || '',
           isAnalyzed: isAnalyzed,
           isAIGenerated: isAIGenerated,
+          isChecklistEvent: isChecklistEvent,
+          isGeneratedEvent: isGeneratedEvent,
+          originalEventId: event.extendedProperties?.private?.originalEventId,
+          originalEventTitle: event.extendedProperties?.private?.originalEventTitle,
           source: 'google',
           attendees: event.attendees ? event.attendees.length : 0,
           allDay: !event.start?.dateTime, // true if only date is provided

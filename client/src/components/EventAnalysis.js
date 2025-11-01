@@ -379,6 +379,51 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                 </div>
               </div>
 
+              {analysis.weather && (
+                <div className="weather-info">
+                  <h5>🌤️ Weather Forecast</h5>
+                  <div className="weather-details">
+                    <div className="weather-main">
+                      <div className="weather-temp">
+                        <span className="temp-value">{analysis.weather.temperature}°C</span>
+                        <span className="temp-feels">Feels like {analysis.weather.feelsLike}°C</span>
+                      </div>
+                      <div className="weather-condition">
+                        <span className="condition-text">{analysis.weather.description}</span>
+                        <span className="condition-location">📍 {analysis.weather.location}</span>
+                      </div>
+                    </div>
+                    <div className="weather-stats">
+                      <div className="weather-stat">
+                        <span className="stat-icon">💧</span>
+                        <span className="stat-value">{analysis.weather.precipitation}%</span>
+                        <span className="stat-label">Rain</span>
+                      </div>
+                      <div className="weather-stat">
+                        <span className="stat-icon">💨</span>
+                        <span className="stat-value">{analysis.weather.windSpeed}</span>
+                        <span className="stat-label">km/h</span>
+                      </div>
+                      <div className="weather-stat">
+                        <span className="stat-icon">💦</span>
+                        <span className="stat-value">{analysis.weather.humidity}%</span>
+                        <span className="stat-label">Humidity</span>
+                      </div>
+                    </div>
+                    {analysis.weather.suggestions && analysis.weather.suggestions.length > 0 && (
+                      <div className="weather-suggestions">
+                        <strong>Weather-based suggestions:</strong>
+                        <ul>
+                          {analysis.weather.suggestions.map((suggestion, idx) => (
+                            <li key={idx}>{suggestion}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="preparation-tasks">
                 <h5>✅ Preparation Tasks</h5>
                 <p className="task-selection-info">Select tasks to add to your calendar:</p>

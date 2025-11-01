@@ -5,6 +5,7 @@ import './EventDetails.css';
 const EventDetails = ({ event, onClose }) => {
   const [linkedTasks, setLinkedTasks] = useState([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [originalEventTitle, setOriginalEventTitle] = useState(event.originalEventTitle || null);
 
   // Fetch linked tasks if this is an analyzed event
   useEffect(() => {
@@ -29,6 +30,27 @@ const EventDetails = ({ event, onClose }) => {
 
     fetchLinkedTasks();
   }, [event.id, event.isAnalyzed]);
+
+  // Fetch original event title if we have the ID but not the title
+  useEffect(() => {
+    const fetchOriginalEventTitle = async () => {
+      if (event.originalEventId && !event.originalEventTitle) {
+        try {
+          const response = await axios.post('/api/get-event-title', {
+            eventId: event.originalEventId
+          });
+
+          if (response.data.success && response.data.title) {
+            setOriginalEventTitle(response.data.title);
+          }
+        } catch (error) {
+          console.error('Error fetching original event title:', error);
+        }
+      }
+    };
+
+    fetchOriginalEventTitle();
+  }, [event.originalEventId, event.originalEventTitle]);
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -107,7 +129,33 @@ const EventDetails = ({ event, onClose }) => {
               <div className="meta-item">
                 <span className="meta-icon">📝</span>
                 <span className="meta-label">Description:</span>
-                <span className="meta-value description-text">{event.description}</span>
+                <span className="meta-value description-text">
+                  {(() => {
+                    // Check if this is an AI-generated task with an original event reference
+                    if ((event.isAIGenerated || event.isChecklistEvent) && (originalEventTitle || event.originalEventId)) {
+                      // Parse description to remove the first line about the original event
+                      const matchQuoted = event.description.match(/AI-generated preparation task for "(.+?)"\.\n\n/);
+                      const matchEventId = event.description.match(/AI-generated preparation task for event ID .+?\.\n\n/);
+
+                      let restOfDescription = event.description;
+                      if (matchQuoted) {
+                        restOfDescription = event.description.replace(/AI-generated preparation task for "(.+?)"\.\n\n/, '');
+                      } else if (matchEventId) {
+                        restOfDescription = event.description.replace(/AI-generated preparation task for event ID .+?\.\n\n/, '');
+                      }
+
+                      return (
+                        <>
+                          <div className="original-event-link">
+                            Preparation task for: <strong>{originalEventTitle || 'Loading...'}</strong>
+                          </div>
+                          {restOfDescription}
+                        </>
+                      );
+                    }
+                    return event.description;
+                  })()}
+                </span>
               </div>
             )}
 

@@ -375,6 +375,18 @@ app.post('/api/add-ai-tasks', async (req, res) => {
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
         const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 
+        // Fetch original event details to get the title
+        let originalEventTitle = 'the event';
+        try {
+          const originalEvent = await calendar.events.get({
+            calendarId: 'primary',
+            eventId: originalEventId
+          });
+          originalEventTitle = originalEvent.data.summary || 'the event';
+        } catch (err) {
+          console.error('Could not fetch original event title:', err.message);
+        }
+
         for (const task of selectedTasks) {
           const startDate = new Date(task.suggestedDate);
           const duration = 60; // Default 1 hour
@@ -392,7 +404,7 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 
           const googleEvent = {
             summary: `📋 ${task.task}`,
-            description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
+            description: `AI-generated preparation task for "${originalEventTitle}".\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
             start: {
               dateTime: formatDateTime(startDate),
               timeZone: timeZone
@@ -408,8 +420,10 @@ app.post('/api/add-ai-tasks', async (req, res) => {
                 aiGenerated: 'true',
                 isAIGenerated: 'true',
                 originalEventId: originalEventId,
+                originalEventTitle: originalEventTitle,
                 priority: task.priority,
-                category: task.category
+                category: task.category,
+                estimatedTime: task.estimatedTime
               }
             }
           };
@@ -568,6 +582,8 @@ app.post('/api/get-linked-tasks', async (req, res) => {
               location: event.location || '',
               priority: event.extendedProperties?.private?.priority,
               category: event.extendedProperties?.private?.category,
+              originalEventId: originalEventId,
+              originalEventTitle: event.extendedProperties?.private?.originalEventTitle,
               isAIGenerated: true,
               isChecklistEvent: true,
               source: 'google'
@@ -603,6 +619,66 @@ app.post('/api/get-linked-tasks', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch linked tasks',
+      error: error.message
+    });
+  }
+});
+
+// Get event title by ID (for displaying original event reference)
+app.post('/api/get-event-title', async (req, res) => {
+  try {
+    const { eventId } = req.body;
+    const tokens = req.session?.tokens;
+
+    if (!eventId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Event ID is required'
+      });
+    }
+
+    // Try to fetch from Google Calendar if user has tokens
+    if (tokens && tokens.access_token) {
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(tokens);
+
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+        const event = await calendar.events.get({
+          calendarId: 'primary',
+          eventId: eventId
+        });
+
+        return res.json({
+          success: true,
+          title: event.data.summary || 'Untitled Event'
+        });
+      } catch (googleError) {
+        console.error('Error fetching event title from Google Calendar:', googleError.message);
+      }
+    }
+
+    // Fallback to mock events if not found in Google Calendar
+    const mockEvent = mockCalendarEvents.find(e => e.id === eventId);
+    if (mockEvent) {
+      return res.json({
+        success: true,
+        title: mockEvent.title
+      });
+    }
+
+    res.json({
+      success: false,
+      message: 'Event not found'
+    });
+
+  } catch (error) {
+    console.error('Error fetching event title:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch event title',
       error: error.message
     });
   }

@@ -1,17 +1,37 @@
 const { OpenAI } = require('openai');
+const weatherService = require('./services/weatherService');
 
 class CalendarEventAnalyzer {
   constructor() {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY environment variable is required');
     }
-    
+
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     });
   }
 
   async analyzeEvent(event) {
+    // Fetch weather data if location is provided
+    let weatherData = null;
+    let weatherSuggestions = [];
+
+    if (event.location && event.date) {
+      try {
+        weatherData = await weatherService.getWeatherForEvent(event.location, event.date);
+        if (weatherData) {
+          weatherSuggestions = weatherService.generateWeatherSuggestions(
+            weatherData,
+            event.type,
+            event.title
+          );
+          console.log(`🌤️  Weather data fetched for ${event.location}: ${weatherData.description}`);
+        }
+      } catch (error) {
+        console.warn('Could not fetch weather data:', error.message);
+      }
+    }
     try {
       const completion = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
@@ -66,17 +86,31 @@ class CalendarEventAnalyzer {
             content: `Analyze this calendar event and suggest comprehensive preparation tasks:
 
             CURRENT DATE AND TIME: ${new Date().toISOString()}
-            
+
             Event Title: ${event.title}
             Event Type: ${event.type}
             Event Date: ${event.date}
             ${event.endDate ? `End Date: ${event.endDate}` : ''}
             ${event.location ? `Location: ${event.location}` : ''}
             ${event.description ? `Description: ${event.description}` : ''}
+            ${weatherData ? `
+            WEATHER FORECAST:
+            - Location: ${weatherData.location}
+            - Temperature: ${weatherData.temperature}°C (Feels like ${weatherData.feelsLike}°C)
+            - Conditions: ${weatherData.description}
+            - Precipitation: ${Math.round(weatherData.precipitation)}% chance
+            - Wind: ${weatherData.windSpeed} km/h
+            - Humidity: ${weatherData.humidity}%
 
-            IMPORTANT: All suggested dates and times MUST be in the future (after the current date/time shown above). 
-            Never suggest preparation tasks with dates/times in the past. If a task was supposed to be done earlier, 
+            Weather-based suggestions:
+            ${weatherSuggestions.map(s => `- ${s}`).join('\n            ')}
+            ` : ''}
+
+            IMPORTANT: All suggested dates and times MUST be in the future (after the current date/time shown above).
+            Never suggest preparation tasks with dates/times in the past. If a task was supposed to be done earlier,
             suggest it for a future time that still allows adequate preparation before the event.
+
+            ${weatherData ? 'WEATHER CONSIDERATIONS: Incorporate the weather forecast and suggestions into your preparation tasks and tips. For outdoor events, prioritize weather-appropriate items.' : ''}
 
             Focus on practical, actionable preparation tasks specific to this type of event.`
           }
@@ -85,7 +119,24 @@ class CalendarEventAnalyzer {
         max_tokens: 1500
       });
 
-      return this.parseOpenAIResponse(completion.choices[0].message.content);
+      const analysis = this.parseOpenAIResponse(completion.choices[0].message.content);
+
+      // Add weather data to the response if available
+      if (weatherData) {
+        analysis.weather = {
+          temperature: weatherData.temperature,
+          feelsLike: weatherData.feelsLike,
+          description: weatherData.description,
+          main: weatherData.main,
+          precipitation: Math.round(weatherData.precipitation),
+          windSpeed: weatherData.windSpeed,
+          humidity: weatherData.humidity,
+          location: weatherData.location,
+          suggestions: weatherSuggestions
+        };
+      }
+
+      return analysis;
     } catch (error) {
       console.error('OpenAI API Error:', error);
       throw new Error(`Failed to analyze event with AI: ${error.message}`);
