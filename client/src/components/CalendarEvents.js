@@ -359,81 +359,123 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     });
   };
 
-  // Get color class based on event type and title for priority-based color coding
-  const getEventColorClass = (event) => {
+  // Cache for color classifications (to avoid repeated calculations)
+  const [colorCache, setColorCache] = useState(new Map());
+
+  // Get color class using hybrid approach: Google colors → Cache → Expanded Keyword Rules
+  // LLM fallback can be added later via API endpoint if needed
+  const getEventColorClassSync = (event) => {
     if (!event) return 'color-general';
     
+    // Check cache first
+    const cacheKey = (event.title || '').toLowerCase().trim();
+    if (cacheKey && colorCache.has(cacheKey)) {
+      return colorCache.get(cacheKey);
+    }
+    
+    // Check Google Calendar colorId
+    if (event.colorId && event.source === 'google') {
+      const googleColorMap = {
+        1: 'color-general', 2: 'color-everyday', 3: 'color-concert',
+        4: 'color-celebration', 5: 'color-todo', 6: 'color-doctor',
+        7: 'color-travel', 8: 'color-general', 9: 'color-work',
+        10: 'color-everyday', 11: 'color-doctor'
+      };
+      const colorClass = googleColorMap[event.colorId] || 'color-general';
+      if (cacheKey) {
+        setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      }
+      return colorClass;
+    }
+    
+    // Expanded keyword rules (inline for performance)
     const eventType = (event.type || '').toLowerCase();
     const eventTitle = (event.title || '').toLowerCase();
     const eventCategory = (event.category || '').toLowerCase();
+    const combinedText = `${eventTitle} ${eventType} ${eventCategory}`.toLowerCase();
     
-    // Doctor/Medical appointments - BRIGHT ORANGE (highest priority)
-    if (eventType.includes('pickup') && (eventTitle.includes('doctor') || eventTitle.includes('appointment') || eventTitle.includes('medical'))) {
-      return 'color-doctor';
-    }
-    if (eventTitle.includes('doctor') || eventTitle.includes('appointment') || eventTitle.includes('medical') || eventTitle.includes('dentist') || eventTitle.includes('clinic')) {
-      return 'color-doctor';
-    }
-    
-    // To-dos and Reminders - YELLOWS
-    if (eventType === 'work' && (eventTitle.includes('todo') || eventTitle.includes('reminder') || eventTitle.includes('task') || eventTitle.includes('due'))) {
-      return 'color-todo';
-    }
-    if (eventTitle.includes('reminder') || eventTitle.includes('todo') || eventTitle.includes('to-do') || eventTitle.includes('task list')) {
-      return 'color-todo';
-    }
-    if (eventType === 'pickup' && !eventTitle.includes('doctor') && !eventTitle.includes('appointment')) {
-      return 'color-todo';
+    // Doctor/Medical (highest priority)
+    if (combinedText.includes('doctor') || combinedText.includes('appointment') || 
+        combinedText.includes('medical') || combinedText.includes('dentist') || 
+        combinedText.includes('clinic')) {
+      const colorClass = 'color-doctor';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Everyday tasks - SHADES OF GREEN
-    if (eventType === 'band practice' || eventType === 'general') {
-      return 'color-everyday';
-    }
-    if (eventTitle.includes('practice') || eventTitle.includes('gym') || eventTitle.includes('exercise') || eventTitle.includes('workout')) {
-      return 'color-everyday';
-    }
-    if (eventCategory === 'preparation' || eventType === 'ai-preparation') {
-      return 'color-everyday';
+    // Daily/Scrum/Standup - Lighter Blue
+    if (combinedText.includes('scrum') || combinedText.includes('standup') || 
+        combinedText.includes('stand-up') || combinedText.includes('daily') || 
+        combinedText.includes('dailies') || combinedText.includes('huddle')) {
+      const colorClass = 'color-work-daily';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Work tasks - BLUE (different shades for different work meeting types)
+    // Work events - Expanded keywords
+    const workKeywords = [
+      'roadmap', 'roadmapping', 'planning', 'strategy', 'sprint', 'meeting', 'call',
+      'sync', 'project', 'work', 'vas', 'review', 'retro', 'grooming', 'estimation',
+      'epic', 'feature', 'jira', 'confluence', 'architecture', 'design review',
+      'code review', 'deploy', 'release', 'qa', 'testing', 'milestone', 'stakeholder',
+      'alignment', 'status', 'demo', 'workshop', 'training', 'onboarding', 'kickoff',
+      'one-on-one', '1-on-1', 'team', 'all-hands', 'town hall'
+    ];
     
-    // Daily/Standup/Scrum meetings - Lighter Blue
-    if (eventTitle.includes('scrum') || eventTitle.includes('standup') || eventTitle.includes('stand-up') || 
-        eventTitle.includes('daily') || eventTitle.includes('dailies') || eventTitle.includes('huddle')) {
-      return 'color-work-daily';
+    if (workKeywords.some(keyword => combinedText.includes(keyword)) || 
+        eventType === 'work' || eventType === 'meeting') {
+      const colorClass = 'color-work';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Regular meetings and work tasks - Standard Blue
-    if (eventType === 'work' || eventTitle.includes('meeting') || eventTitle.includes('work') || 
-        eventTitle.includes('project') || eventTitle.includes('vas') || eventTitle.includes('sync') ||
-        eventTitle.includes('review') || eventTitle.includes('retro') || eventTitle.includes('planning')) {
-      return 'color-work';
+    // To-dos
+    if (combinedText.includes('todo') || combinedText.includes('to-do') || 
+        combinedText.includes('reminder') || combinedText.includes('task') || 
+        combinedText.includes('due') || combinedText.includes('deadline')) {
+      const colorClass = 'color-todo';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Meetings - Standard Blue (work-related)
-    if (eventType === 'meeting') {
-      return 'color-work';
+    // Everyday tasks
+    if (combinedText.includes('practice') || combinedText.includes('gym') || 
+        combinedText.includes('exercise') || combinedText.includes('workout') ||
+        eventType === 'band practice' || eventCategory === 'preparation') {
+      const colorClass = 'color-everyday';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Travel - Keep existing but can add specific color
-    if (eventType === 'travel') {
-      return 'color-travel';
+    // Travel
+    if (combinedText.includes('travel') || combinedText.includes('trip') || 
+        combinedText.includes('flight') || eventType === 'travel') {
+      const colorClass = 'color-travel';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Celebrations - Special color
-    if (eventType === 'celebration') {
-      return 'color-celebration';
+    // Celebrations
+    if (combinedText.includes('birthday') || combinedText.includes('anniversary') || 
+        combinedText.includes('party') || combinedText.includes('celebration') ||
+        eventType === 'celebration') {
+      const colorClass = 'color-celebration';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
-    // Concerts/Shows - Special color
-    if (eventType === 'concert') {
-      return 'color-concert';
+    // Concerts
+    if (combinedText.includes('concert') || combinedText.includes('show') || 
+        combinedText.includes('music') || eventType === 'concert') {
+      const colorClass = 'color-concert';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
     }
     
     // Default
-    return 'color-general';
+    const colorClass = 'color-general';
+    if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+    return colorClass;
   };
 
   const getEventTypeClass = (type) => {
@@ -724,7 +766,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                   return (
                   <div
                     key={event.id}
-                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClass(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
+                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
                     onClick={() => canClick && handleAnalyzeEvent(event)}
                     title={getTitle()}
                     style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -872,7 +914,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                           return (
                           <div
                             key={event.id}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClass(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
                             onClick={() => canClick && handleAnalyzeEvent(event)}
                             title={getTitle()}
                             style={{ cursor: canClick ? 'pointer' : 'default' }}

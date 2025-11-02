@@ -11,6 +11,7 @@ const uberRoutes = require('./routes/uber');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const voiceRoutes = require('./routes/voice');
 const wishlistRoutes = require('./routes/wishlist');
+const colorClassificationService = require('./services/colorClassificationService');
 
 const app = express();
 
@@ -236,6 +237,34 @@ let mockCalendarEvents = [
 ];
 
 // Routes
+// Color classification endpoint (for LLM fallback if needed)
+app.post('/api/calendar/color-classify', async (req, res) => {
+  try {
+    const { event } = req.body;
+    
+    if (!event || !event.title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Event with title is required'
+      });
+    }
+
+    const colorClass = await colorClassificationService.getColorClass(event);
+    
+    res.json({
+      success: true,
+      colorClass: colorClass,
+      cacheSize: colorClassificationService.getCacheSize()
+    });
+  } catch (error) {
+    console.error('Error classifying event color:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to classify event color'
+    });
+  }
+});
+
 app.get('/api/calendar/events', (req, res) => {
   try {
     // Simulate API delay

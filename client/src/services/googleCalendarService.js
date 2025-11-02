@@ -210,7 +210,8 @@ class GoogleCalendarService {
         location: location,
         isAnalyzed: false,
         aiGenerated: false,
-        source: 'google'
+        source: 'google',
+        colorId: event.colorId || null // Include Google Calendar colorId
       };
     });
   }
