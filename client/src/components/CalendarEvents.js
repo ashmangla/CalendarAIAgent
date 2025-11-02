@@ -17,6 +17,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
   const [weatherData, setWeatherData] = useState({});
+  const [lastMorningReviewDate, setLastMorningReviewDate] = useState(null);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -119,6 +120,31 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
       console.log('🌤️ Skipping - showTodayOnly:', showTodayOnly, 'events.length:', events.length);
     }
   }, [events, showTodayOnly, fetchWeatherForTodayEvents]);
+
+  // Morning review: Check if it's a new day and suggest wishlist review
+  useEffect(() => {
+    const checkMorningReview = () => {
+      const today = new Date().toDateString();
+      const storedReviewDate = localStorage.getItem('lastMorningReviewDate');
+      
+      // If it's a new day and we haven't shown review today
+      if ((!lastMorningReviewDate || lastMorningReviewDate !== today) && 
+          (!storedReviewDate || storedReviewDate !== today) && 
+          events.length > 0) {
+        // Check if it's morning (between 6 AM and 11 AM)
+        const currentHour = new Date().getHours();
+        if (currentHour >= 6 && currentHour < 11) {
+          // Store that we checked today (don't auto-open, user can click button)
+          setLastMorningReviewDate(today);
+          localStorage.setItem('lastMorningReviewDate', today);
+        }
+      }
+    };
+
+    if (events.length > 0 && !showAuthModal && !showTodayOnly) {
+      checkMorningReview();
+    }
+  }, [events, lastMorningReviewDate, showAuthModal, showTodayOnly]);
 
   // Handle Google authentication success
   const handleGoogleAuthSuccess = (user) => {
@@ -333,6 +359,83 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     });
   };
 
+  // Get color class based on event type and title for priority-based color coding
+  const getEventColorClass = (event) => {
+    if (!event) return 'color-general';
+    
+    const eventType = (event.type || '').toLowerCase();
+    const eventTitle = (event.title || '').toLowerCase();
+    const eventCategory = (event.category || '').toLowerCase();
+    
+    // Doctor/Medical appointments - BRIGHT ORANGE (highest priority)
+    if (eventType.includes('pickup') && (eventTitle.includes('doctor') || eventTitle.includes('appointment') || eventTitle.includes('medical'))) {
+      return 'color-doctor';
+    }
+    if (eventTitle.includes('doctor') || eventTitle.includes('appointment') || eventTitle.includes('medical') || eventTitle.includes('dentist') || eventTitle.includes('clinic')) {
+      return 'color-doctor';
+    }
+    
+    // To-dos and Reminders - YELLOWS
+    if (eventType === 'work' && (eventTitle.includes('todo') || eventTitle.includes('reminder') || eventTitle.includes('task') || eventTitle.includes('due'))) {
+      return 'color-todo';
+    }
+    if (eventTitle.includes('reminder') || eventTitle.includes('todo') || eventTitle.includes('to-do') || eventTitle.includes('task list')) {
+      return 'color-todo';
+    }
+    if (eventType === 'pickup' && !eventTitle.includes('doctor') && !eventTitle.includes('appointment')) {
+      return 'color-todo';
+    }
+    
+    // Everyday tasks - SHADES OF GREEN
+    if (eventType === 'band practice' || eventType === 'general') {
+      return 'color-everyday';
+    }
+    if (eventTitle.includes('practice') || eventTitle.includes('gym') || eventTitle.includes('exercise') || eventTitle.includes('workout')) {
+      return 'color-everyday';
+    }
+    if (eventCategory === 'preparation' || eventType === 'ai-preparation') {
+      return 'color-everyday';
+    }
+    
+    // Work tasks - BLUE (different shades for different work meeting types)
+    
+    // Daily/Standup/Scrum meetings - Lighter Blue
+    if (eventTitle.includes('scrum') || eventTitle.includes('standup') || eventTitle.includes('stand-up') || 
+        eventTitle.includes('daily') || eventTitle.includes('dailies') || eventTitle.includes('huddle')) {
+      return 'color-work-daily';
+    }
+    
+    // Regular meetings and work tasks - Standard Blue
+    if (eventType === 'work' || eventTitle.includes('meeting') || eventTitle.includes('work') || 
+        eventTitle.includes('project') || eventTitle.includes('vas') || eventTitle.includes('sync') ||
+        eventTitle.includes('review') || eventTitle.includes('retro') || eventTitle.includes('planning')) {
+      return 'color-work';
+    }
+    
+    // Meetings - Standard Blue (work-related)
+    if (eventType === 'meeting') {
+      return 'color-work';
+    }
+    
+    // Travel - Keep existing but can add specific color
+    if (eventType === 'travel') {
+      return 'color-travel';
+    }
+    
+    // Celebrations - Special color
+    if (eventType === 'celebration') {
+      return 'color-celebration';
+    }
+    
+    // Concerts/Shows - Special color
+    if (eventType === 'concert') {
+      return 'color-concert';
+    }
+    
+    // Default
+    return 'color-general';
+  };
+
   const getEventTypeClass = (type) => {
     return type.replace(/\s+/g, '-').toLowerCase();
   };
@@ -340,15 +443,25 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   // Group events by date for calendar grid
   const groupEventsByDate = () => {
     const grouped = {};
-    events.forEach(event => {
-      const eventDate = new Date(event.date);
-      const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
-      
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = [];
-      }
-      grouped[dateKey].push(event);
-    });
+    events
+      .filter(event => event && event.date) // Filter out null/undefined events
+      .forEach(event => {
+        try {
+          const eventDate = new Date(event.date);
+          if (isNaN(eventDate.getTime())) {
+            console.warn('Invalid event date:', event);
+            return; // Skip invalid dates
+          }
+          const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          
+          if (!grouped[dateKey]) {
+            grouped[dateKey] = [];
+          }
+          grouped[dateKey].push(event);
+        } catch (error) {
+          console.warn('Error processing event:', event, error);
+        }
+      });
     return grouped;
   };
 
@@ -466,7 +579,49 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     }
   }, [selectedEvent]);
 
+  const handleDeleteEvent = async (event, e) => {
+    e.stopPropagation(); // Prevent event card click
+    
+    const confirmMessage = `Are you sure you want to delete "${event.title}"?`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      const eventId = event.id || event.eventId;
+      const response = await axios.delete(`/api/calendar/events/${eventId}`, {
+        withCredentials: true
+      });
+
+      if (response.data.success) {
+        // Remove from local state
+        setEvents(prevEvents => 
+          prevEvents.filter(e => (e.id || e.eventId) !== eventId)
+        );
+        
+        // Close analysis panel if this event was selected
+        if (selectedEvent && (selectedEvent.id || selectedEvent.eventId) === eventId) {
+          setShowAnalysis(false);
+          setSelectedEvent(null);
+        }
+
+        // Show success message
+        alert('Event deleted successfully');
+      } else {
+        alert('Failed to delete event. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('Error deleting event. Please try again.');
+    }
+  };
+
   const handleVoiceEventAdded = useCallback((newEvent) => {
+    // If newEvent is null, just refresh events (for deletion case)
+    if (!newEvent) {
+      fetchEvents();
+      return;
+    }
     // Add the new event to the events list immediately for instant feedback
     setEvents(prevEvents => [...prevEvents, newEvent]);
     // Refresh events after a short delay to get updated list from Google Calendar
@@ -542,6 +697,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
           existingEvents={events}
         />
       )}
+
       
       <div className="calendar-content">
         {showTodayOnly ? (
@@ -568,7 +724,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                   return (
                   <div
                     key={event.id}
-                    className={`event-card ${getEventTypeClass(event.type)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
+                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClass(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
                     onClick={() => canClick && handleAnalyzeEvent(event)}
                     title={getTitle()}
                     style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -583,6 +739,13 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                       <span className={`event-type ${getEventTypeClass(event.type)}`}>
                         {event.type}
                       </span>
+                      <button
+                        className="delete-event-btn"
+                        onClick={(e) => handleDeleteEvent(event, e)}
+                        title="Delete event"
+                      >
+                        🗑️
+                      </button>
                     </div>
                     <h3 className="event-title">{event.title}</h3>
                     <div className="event-card-body">
@@ -709,7 +872,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                           return (
                           <div
                             key={event.id}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClass(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
                             onClick={() => canClick && handleAnalyzeEvent(event)}
                             title={getTitle()}
                             style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -726,6 +889,14 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                               <span className="checklist-badge-small" title="Generated event from checklist (cannot be analyzed)">📋</span>
                             )}
                             {event.isRecurring && <span className="recurring-icon">🔄</span>}
+                            <button
+                              className="delete-event-btn-small"
+                              onClick={(e) => handleDeleteEvent(event, e)}
+                              title="Delete event"
+                              aria-label="Delete event"
+                            >
+                              ×
+                            </button>
                           </div>
                           );
                         })}
@@ -766,6 +937,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
             )}
           </div>
         )}
+
       </div>
     </div>
   );

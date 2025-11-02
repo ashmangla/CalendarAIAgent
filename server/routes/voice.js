@@ -3,6 +3,7 @@ const router = express.Router();
 const VoiceAdapterFactory = require('../services/voice/VoiceAdapterFactory');
 const calendarConflictService = require('../services/calendarConflictService');
 const eventsStore = require('../services/eventsStore');
+const wishlistStore = require('../services/wishlistStore');
 
 // Initialize voice adapter
 let voiceAdapter;
@@ -15,7 +16,7 @@ try {
 }
 
 /**
- * Process voice transcript and parse intent
+ * Process voice transcript and parse intent with follow-up question support
  */
 router.post('/process', async (req, res) => {
   try {
@@ -28,17 +29,29 @@ router.post('/process', async (req, res) => {
       });
     }
 
-    // Parse intent and extract event details
+    // Extract conversation state from context
+    const conversationHistory = context.conversationHistory || [];
+    const followUpCount = context.followUpCount || 0;
+
+    // Parse intent and extract event details with conversation context
     const intentResult = await voiceAdapter.parseIntent(transcript, {
       currentDate: new Date().toISOString().split('T')[0],
+      conversationHistory: conversationHistory,
+      followUpCount: followUpCount,
       ...context
     });
 
     res.json({
       success: true,
       intent: intentResult.intent,
-      eventDetails: intentResult.eventDetails,
-      confidence: intentResult.confidence
+      eventDetails: intentResult.eventDetails || {},
+      followUpQuestion: intentResult.followUpQuestion || null,
+      missingInfo: intentResult.missingInfo || [],
+      confidence: intentResult.confidence || 0.8,
+      readyToProcess: intentResult.readyToProcess !== false,
+      abort: intentResult.abort || false,
+      abortMessage: intentResult.abortMessage || null,
+      conversationHistory: intentResult.conversationHistory || conversationHistory
     });
   } catch (error) {
     console.error('Error processing voice input:', error);
@@ -286,14 +299,14 @@ router.post('/create-event', async (req, res) => {
       });
     }
 
-    // Parse date and time
+    // LLM should return properly formatted date/time, but we validate and normalize here
     const duration = eventDetails.duration || 60; // Default 60 minutes
     const eventDate = eventDetails.date;
     let eventTime = eventDetails.time;
     
-    // Ensure time is in HH:MM format
+    // Normalize time format (LLM should return HH:MM, but handle edge cases)
     if (eventTime && !eventTime.includes(':')) {
-      // Handle formats like "730" or "7:30pm"
+      // Handle edge cases where time might not be properly formatted
       const timeMatch = eventTime.match(/(\d{1,2}):?(\d{2})?\s?(am|pm)?/i);
       if (timeMatch) {
         let hours = parseInt(timeMatch[1]);
@@ -304,17 +317,22 @@ router.post('/create-event', async (req, res) => {
         if (period === 'am' && hours === 12) hours = 0;
         
         eventTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid time format. Expected HH:MM format.'
+        });
       }
     }
     
-    // Ensure date is in YYYY-MM-DD format
+    // Validate and normalize date format (LLM should return YYYY-MM-DD)
     let normalizedDate = eventDate;
-    if (!eventDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    if (!eventDate || !eventDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
       const dateObj = new Date(eventDate);
       if (isNaN(dateObj.getTime())) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid date format. Please provide date in YYYY-MM-DD format.'
+          error: 'Invalid date format. Expected YYYY-MM-DD format.'
         });
       }
       normalizedDate = dateObj.toISOString().split('T')[0];
@@ -505,6 +523,51 @@ router.post('/generate-response', async (req, res) => {
   }
 });
 
+/**
+ * Add item to wishlist via voice
+ */
+router.post('/add-to-wishlist', async (req, res) => {
+  try {
+    const { eventDetails } = req.body;
+
+    if (!eventDetails || !eventDetails.title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Event details with title are required'
+      });
+    }
+
+    const wishlistItem = wishlistStore.addItem({
+      title: eventDetails.title,
+      description: eventDetails.description || null,
+      date: eventDetails.date || null,
+      time: eventDetails.time || null,
+      priority: 'medium',
+      location: eventDetails.location || null,
+      category: null,
+      source: 'voice'
+    });
+
+    const response = await voiceAdapter.generateResponse({
+      type: 'wishlist_added',
+      itemTitle: wishlistItem.title,
+      hasDateTime: !!(wishlistItem.date && wishlistItem.time)
+    });
+
+    res.json({
+      success: true,
+      item: wishlistItem,
+      response: response || `Added "${wishlistItem.title}" to your wishlist. I'll suggest it when you have free time!`
+    });
+  } catch (error) {
+    console.error('Error adding to wishlist:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to add to wishlist'
+    });
+  }
+});
+
 function _determineEventType(title) {
   const lower = title.toLowerCase();
   if (lower.includes('dental') || lower.includes('doctor') || lower.includes('appointment')) {
@@ -513,7 +576,11 @@ function _determineEventType(title) {
     return 'Meeting';
   } else if (lower.includes('travel') || lower.includes('trip')) {
     return 'Travel';
-  } else if (lower.includes('concert') || lower.includes('show')) {
+  } else if (lower.includes('practice') || lower.includes('rehearsal')) {
+    // Check practice BEFORE music/concert to avoid misclassification
+    return 'Band Practice';
+  } else if (lower.includes('concert') || lower.includes('show') || 
+             (lower.includes('music') && !lower.includes('practice'))) {
     return 'Concert';
   }
   return 'General';

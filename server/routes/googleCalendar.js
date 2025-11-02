@@ -11,7 +11,7 @@ function initOAuth2Client() {
     oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/google-calendar/callback'
+      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5001/api/google-calendar/callback'
     );
   }
   return oauth2Client;
@@ -109,14 +109,16 @@ router.post('/events', async (req, res) => {
     
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
-    // Set time window to one month from now
+    // Set time window to one month from now (only fetch future events)
     const now = new Date();
+    // Ensure we're getting events from today onwards, not past
+    now.setHours(0, 0, 0, 0); // Start from beginning of today
     const oneMonthLater = new Date(now);
     oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
     
     const response = await calendar.events.list({
       calendarId: 'primary',
-      timeMin: now.toISOString(),
+      timeMin: now.toISOString(), // Only fetch events from today onwards
       timeMax: oneMonthLater.toISOString(),
       maxResults: 250,
       singleEvents: true,
@@ -156,7 +158,20 @@ router.post('/events', async (req, res) => {
         const end = event.end?.dateTime || event.end?.date;
         
         // Determine event type based on title and description
-        const title = event.summary || 'Untitled Event';
+        // For checklist events, ensure the title is properly extracted
+        let title = event.summary || 'Untitled Event';
+        
+        // If title starts with 📋 but is just the emoji or placeholder, extract from description
+        if ((event.extendedProperties?.private?.isChecklistEvent === 'true' || 
+             event.extendedProperties?.private?.isGeneratedEvent === 'true') &&
+            (title === '📋' || title === '📋 ' || title.includes('Prep:') || title.includes('Prep for'))) {
+          // Try to extract task title from description
+          const descMatch = event.description?.match(/^📋\s*(.+?)(?:\n|$)/);
+          if (descMatch) {
+            title = `📋 ${descMatch[1]}`;
+          }
+        }
+        
         const description = event.description || '';
         
         let type = 'general';
@@ -169,12 +184,14 @@ router.post('/events', async (req, res) => {
         } else if (titleLower.includes('travel') || titleLower.includes('trip') || 
                    titleLower.includes('flight') || titleLower.includes('train')) {
           type = 'travel';
-        } else if (titleLower.includes('concert') || titleLower.includes('music') || 
-                   titleLower.includes('show') || titleLower.includes('performance')) {
-          type = 'concert';
         } else if (titleLower.includes('practice') || titleLower.includes('rehearsal') || 
                    titleLower.includes('training') || titleLower.includes('workout')) {
+          // Check practice BEFORE music to avoid misclassifying "music band practice" as concert
           type = 'band practice';
+        } else if (titleLower.includes('concert') || titleLower.includes('show') || 
+                   (titleLower.includes('music') && !titleLower.includes('practice'))) {
+          // Only classify as concert if it's music-related but NOT practice
+          type = 'concert';
         } else if (titleLower.includes('pickup') || titleLower.includes('delivery') || 
                    titleLower.includes('appointment') || titleLower.includes('doctor')) {
           type = 'pickup';

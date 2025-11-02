@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import './App.css';
 import CalendarEvents from './components/CalendarEvents';
+import Wishlist from './components/Wishlist';
 import logo from './images/Logo.png';
 
 function App() {
@@ -121,6 +122,12 @@ function App() {
           >
             Analyze Events
           </button>
+          <button
+            className={`nav-btn ${activeTab === 'wishlist' ? 'active' : ''}`}
+            onClick={() => setActiveTab('wishlist')}
+          >
+            🌟 Wishlist
+          </button>
         </nav>
       </header>
 
@@ -177,6 +184,17 @@ function App() {
               onDisconnectRequest={handleDisconnectRequest}
               onRefreshEventsRequest={handleRefreshEventsRequest}
               onVoiceAssistantRequest={handleVoiceAssistantRequest}
+            />
+          )}
+
+          {activeTab === 'wishlist' && (
+            <Wishlist
+              onScheduleItem={async (eventDetails, wishlistItemId) => {
+                // Refresh calendar events after scheduling
+                if (refreshEventsHandler) {
+                  refreshEventsHandler();
+                }
+              }}
             />
           )}
       </div>

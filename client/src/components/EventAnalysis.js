@@ -17,6 +17,24 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [isGeneratedEvent, setIsGeneratedEvent] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [metadata, setMetadata] = useState(null);
+  
+  // Check if event type suggests transportation might be needed
+  const needsTransportation = () => {
+    if (!event) return false;
+    const eventType = (event.type || '').toLowerCase();
+    const eventTitle = (event.title || '').toLowerCase();
+    const eventLocation = (event.location || '').toLowerCase();
+    
+    // Events that typically need transportation
+    const transportationNeededTypes = ['travel', 'meeting', 'pickup', 'celebration', 'concert'];
+    const transportationKeywords = ['trip', 'meetup', 'appointment', 'visit'];
+    
+    return (
+      transportationNeededTypes.includes(eventType) ||
+      transportationKeywords.some(keyword => eventTitle.includes(keyword)) ||
+      (eventLocation && eventLocation.length > 0) // If there's a location, might need transportation
+    );
+  };
 
   const analyzeEvent = useCallback(async () => {
     setLoading(true);
@@ -126,7 +144,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }));
   };
 
-  const addChecklistItem = (taskId) => {
+  const addChecklistItem = (taskId, newItem = 'New item') => {
     const taskKey = taskId || 'default';
     const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
     
@@ -135,8 +153,8 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     // Get checklist items
     const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
     
-    // Add new empty item
-    const updatedItems = [...checklistItems, 'New item'];
+    // Add new item
+    const updatedItems = [...checklistItems, newItem];
     
     // Update edited task
     setEditedTasks(prev => ({
@@ -146,6 +164,38 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
         description: updatedItems.join(', ')
       }
     }));
+  };
+  
+  const addTransportationToChecklist = (taskId) => {
+    const taskKey = taskId || 'default';
+    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    
+    if (!currentTask) return;
+    
+    // Get checklist items
+    const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
+    
+    // Check if transportation item already exists
+    const hasTransportation = checklistItems.some(item => 
+      item.toLowerCase().includes('uber') || 
+      item.toLowerCase().includes('ride') || 
+      item.toLowerCase().includes('transportation')
+    );
+    
+    if (!hasTransportation) {
+      // Add transportation item
+      const updatedItems = [...checklistItems, 'Book Uber ride to event'];
+      
+      // Update edited task and mark as transportation task
+      setEditedTasks(prev => ({
+        ...prev,
+        [taskKey]: {
+          ...currentTask,
+          description: updatedItems.join(', '),
+          category: 'Transportation'
+        }
+      }));
+    }
   };
 
   const removeChecklistItem = (taskId, itemIndex) => {
@@ -308,12 +358,14 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
             <p className="event-meta">
               <span className="event-type-badge">{event.type}</span>
               <span className="event-date">
-                {new Date(event.date).toLocaleDateString('en-US', {
+                {new Date(event.date).toLocaleString('en-US', {
                   weekday: 'long',
                   month: 'long',
                   day: 'numeric',
+                  year: 'numeric',
                   hour: '2-digit',
-                  minute: '2-digit'
+                  minute: '2-digit',
+                  hour12: true
                 })}
               </span>
             </p>
@@ -484,16 +536,28 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                             <div className="checklist-header">
                               <strong>Checklist:</strong>
                               {isEditing && (
-                                <button
-                                  className="add-item-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    addChecklistItem(taskKey);
-                                  }}
-                                  title="Add item"
-                                >
-                                  + Add Item
-                                </button>
+                                <div className="checklist-actions">
+                                  <button
+                                    className="add-ride-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      addTransportationToChecklist(taskKey);
+                                    }}
+                                    title="Add transportation/ride option"
+                                  >
+                                    🚕 Add Ride
+                                  </button>
+                                  <button
+                                    className="add-item-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      addChecklistItem(taskKey);
+                                    }}
+                                    title="Add item"
+                                  >
+                                    + Add Item
+                                  </button>
+                                </div>
                               )}
                             </div>
                             {checklistItems.length > 0 ? (
@@ -633,6 +697,16 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                   )}
                 </div>
                 <div className="action-buttons">
+                  {/* Show Uber booking button for events that need transportation */}
+                  {needsTransportation() && (
+                    <button 
+                      className="uber-booking-btn" 
+                      onClick={() => setShowUberModal(true)}
+                      title="Book an Uber ride for this event"
+                    >
+                      🚕 Book Uber Ride
+                    </button>
+                  )}
                   <button 
                     className="add-tasks-btn" 
                     onClick={addSelectedTasksToCalendar}

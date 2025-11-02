@@ -179,16 +179,23 @@ class GoogleCalendarService {
       const location = event.location || '';
       
       let type = 'general';
-      if (title.toLowerCase().includes('meeting') || description.toLowerCase().includes('meeting')) {
+      const titleLower = title.toLowerCase();
+      const descLower = description.toLowerCase();
+      
+      if (titleLower.includes('meeting') || descLower.includes('meeting')) {
         type = 'meeting';
-      } else if (title.toLowerCase().includes('travel') || title.toLowerCase().includes('trip') || 
-                 description.toLowerCase().includes('travel') || description.toLowerCase().includes('flight')) {
+      } else if (titleLower.includes('travel') || titleLower.includes('trip') || 
+                 descLower.includes('travel') || descLower.includes('flight')) {
         type = 'travel';
-      } else if (title.toLowerCase().includes('concert') || title.toLowerCase().includes('music') ||
-                 description.toLowerCase().includes('concert') || description.toLowerCase().includes('music')) {
-        type = 'concert';
-      } else if (title.toLowerCase().includes('practice') || title.toLowerCase().includes('rehearsal')) {
+      } else if (titleLower.includes('practice') || titleLower.includes('rehearsal') ||
+                 descLower.includes('practice') || descLower.includes('rehearsal')) {
+        // Check practice BEFORE music to avoid misclassifying "music band practice" as concert
         type = 'band practice';
+      } else if (titleLower.includes('concert') || titleLower.includes('show') ||
+                 (titleLower.includes('music') && !titleLower.includes('practice')) ||
+                 descLower.includes('concert') || descLower.includes('show') ||
+                 (descLower.includes('music') && !descLower.includes('practice'))) {
+        type = 'concert';
       } else if (title.toLowerCase().includes('pickup') || title.toLowerCase().includes('pick up')) {
         type = 'pickup';
       }

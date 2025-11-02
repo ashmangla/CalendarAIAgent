@@ -10,6 +10,7 @@ const weatherService = require('./services/weatherService');
 const uberRoutes = require('./routes/uber');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const voiceRoutes = require('./routes/voice');
+const wishlistRoutes = require('./routes/wishlist');
 
 const app = express();
 
@@ -394,6 +395,86 @@ app.post('/api/analyze-event', async (req, res) => {
   }
 });
 
+// Delete event endpoint
+app.delete('/api/calendar/events/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const tokens = req.session?.tokens;
+
+    if (!eventId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Event ID is required'
+      });
+    }
+
+    let deletedFromGoogle = false;
+
+    // If Google Calendar tokens provided, delete from Google Calendar
+    if (tokens && tokens.access_token) {
+      try {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials(tokens);
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+        // Check if event exists in Google Calendar
+        try {
+          await calendar.events.get({
+            calendarId: 'primary',
+            eventId: eventId
+          });
+
+          // Event exists, delete it
+          await calendar.events.delete({
+            calendarId: 'primary',
+            eventId: eventId
+          });
+
+          deletedFromGoogle = true;
+          console.log(`✅ Deleted event from Google Calendar: ${eventId}`);
+        } catch (getError) {
+          // Event not found in Google Calendar, continue to check mock events
+          console.log(`ℹ️ Event not found in Google Calendar, checking mock events: ${eventId}`);
+        }
+      } catch (googleError) {
+        console.error('❌ Error deleting from Google Calendar:', googleError.message);
+        // Continue to try deleting from mock events
+      }
+    }
+
+    // Delete from mock events (either as fallback or primary)
+    const deletedEvent = eventsStore.deleteEvent(eventId);
+    
+    // Also check and remove from mockCalendarEvents array
+    const mockIndex = mockCalendarEvents.findIndex(e => e.id === eventId || e.eventId === eventId);
+    if (mockIndex !== -1) {
+      mockCalendarEvents.splice(mockIndex, 1);
+      console.log(`🗑️ Deleted event from mock calendar: ${eventId}`);
+    }
+
+    if (deletedFromGoogle || deletedEvent || mockIndex !== -1) {
+      res.json({
+        success: true,
+        message: 'Event deleted successfully',
+        deletedFromGoogle: deletedFromGoogle
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting event:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete event',
+      error: error.message
+    });
+  }
+});
+
 // Check event analysis status
 app.get('/api/event-status/:eventId', (req, res) => {
   try {
@@ -486,9 +567,12 @@ app.post('/api/add-ai-tasks', async (req, res) => {
             return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
           };
 
+          // Ensure we have a valid task title
+          const taskTitle = task.task || task.description?.split('.')[0] || task.description?.split(',')[0] || 'Preparation Task';
+          
           const googleEvent = {
-            summary: `📋 ${task.task}`,
-            description: `AI-generated preparation task for "${originalEventTitle}".\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
+            summary: `📋 ${taskTitle}`,
+            description: `AI-generated preparation task for "${originalEventTitle}".\n\n${task.description || ''}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
             start: {
               dateTime: formatDateTime(startDate),
               timeZone: timeZone
@@ -519,7 +603,7 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 
           addedEvents.push({
             id: createdEvent.data.id,
-            title: `📋 ${task.task}`,
+            title: `📋 ${taskTitle}`,
             type: 'ai-preparation',
             date: createdEvent.data.start.dateTime,
             endDate: createdEvent.data.end.dateTime,
@@ -531,6 +615,7 @@ app.post('/api/add-ai-tasks', async (req, res) => {
             isAIGenerated: true,
             source: 'google',
             originalEventId: originalEventId,
+            originalEventTitle: originalEventTitle,
             priority: task.priority,
             category: task.category,
             estimatedTime: task.estimatedTime
@@ -571,19 +656,34 @@ app.post('/api/add-ai-tasks', async (req, res) => {
       let nextId = Math.max(...mockCalendarEvents.map(e => parseInt(e.id))) + 1;
 
       selectedTasks.forEach(task => {
+        // Ensure we have a valid task title
+        const taskTitle = task.task || task.description?.split('.')[0] || task.description?.split(',')[0] || 'Preparation Task';
+        
+        // Get original event title for mock events too
+        let originalEventTitleForMock = 'the event';
+        try {
+          const originalEvent = mockCalendarEvents.find(e => e.id === originalEventId);
+          if (originalEvent) {
+            originalEventTitleForMock = originalEvent.title || 'the event';
+          }
+        } catch (err) {
+          console.warn('Could not find original event for mock:', err.message);
+        }
+        
         const newEvent = {
           id: nextId.toString(),
-          title: `📋 ${task.task}`,
+          title: `📋 ${taskTitle}`,
           type: 'ai-preparation',
           date: task.suggestedDate,
           endDate: null,
-          description: `AI-generated preparation task for event ID ${originalEventId}.\n\n${task.description}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
+          description: `AI-generated preparation task for "${originalEventTitleForMock}".\n\n${task.description || ''}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
           location: null,
           isAnalyzed: true,
           isChecklistEvent: true,
           isGeneratedEvent: true,
           isAIGenerated: true,
           originalEventId: originalEventId,
+          originalEventTitle: originalEventTitleForMock,
           taskId: task.id,
           priority: task.priority,
           category: task.category,
@@ -821,6 +921,7 @@ app.post('/api/get-weather', async (req, res) => {
 
 // Uber service routes
 app.use('/api/uber', uberRoutes);
+app.use('/api/wishlist', wishlistRoutes);
 
 // Initialize events store with mockCalendarEvents
 eventsStore.initialize(mockCalendarEvents);

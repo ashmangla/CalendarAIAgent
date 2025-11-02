@@ -468,6 +468,180 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  position: relative;
+}
+
+/* Color Coding for Calendar Events - Priority-Based Palette */
+
+/* Doctor/Medical Appointments - BRIGHT ORANGE (Highest Priority) */
+.calendar-event-item.color-doctor,
+.event-card.color-doctor {
+  background: rgba(255, 107, 53, 0.15);
+  border-left-color: #FF6B35;
+  color: #C23E1A;
+}
+
+.calendar-event-item.color-doctor .event-dot,
+.event-card.color-doctor::before {
+  background: #FF6B35;
+}
+
+.calendar-event-item.color-doctor:hover:not(.past-event),
+.event-card.color-doctor:hover {
+  background: rgba(255, 107, 53, 0.25);
+  border-left-color: #FF4500;
+}
+
+/* To-dos and Reminders - YELLOWS */
+.calendar-event-item.color-todo,
+.event-card.color-todo {
+  background: rgba(255, 217, 61, 0.2);
+  border-left-color: #FFD93D;
+  color: #B8860B;
+}
+
+.calendar-event-item.color-todo .event-dot,
+.event-card.color-todo::before {
+  background: #FFD93D;
+}
+
+.calendar-event-item.color-todo:hover:not(.past-event),
+.event-card.color-todo:hover {
+  background: rgba(255, 217, 61, 0.3);
+  border-left-color: #FFC107;
+}
+
+/* Everyday Tasks - SHADES OF GREEN */
+.calendar-event-item.color-everyday,
+.event-card.color-everyday {
+  background: rgba(16, 185, 129, 0.12);
+  border-left-color: #10B981;
+  color: #047857;
+}
+
+.calendar-event-item.color-everyday .event-dot,
+.event-card.color-everyday::before {
+  background: #10B981;
+}
+
+.calendar-event-item.color-everyday:hover:not(.past-event),
+.event-card.color-everyday:hover {
+  background: rgba(16, 185, 129, 0.2);
+  border-left-color: #059669;
+}
+
+/* Work Tasks - BLUE (Standard) */
+.calendar-event-item.color-work,
+.event-card.color-work {
+  background: rgba(59, 130, 246, 0.12);
+  border-left-color: #3B82F6;
+  color: #1E40AF;
+}
+
+.calendar-event-item.color-work .event-dot,
+.event-card.color-work::before {
+  background: #3B82F6;
+}
+
+.calendar-event-item.color-work:hover:not(.past-event),
+.event-card.color-work:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-left-color: #2563EB;
+}
+
+/* Daily/Scrum/Standup Meetings - LIGHTER BLUE */
+.calendar-event-item.color-work-daily,
+.event-card.color-work-daily {
+  background: rgba(147, 197, 253, 0.15);
+  border-left-color: #60A5FA;
+  color: #1E3A8A;
+}
+
+.calendar-event-item.color-work-daily .event-dot,
+.event-card.color-work-daily::before {
+  background: #60A5FA;
+}
+
+.calendar-event-item.color-work-daily:hover:not(.past-event),
+.event-card.color-work-daily:hover {
+  background: rgba(147, 197, 253, 0.25);
+  border-left-color: #3B82F6;
+}
+
+/* Travel - TEAL/CYAN */
+.calendar-event-item.color-travel,
+.event-card.color-travel {
+  background: rgba(6, 182, 212, 0.12);
+  border-left-color: #06B6D4;
+  color: #0E7490;
+}
+
+.calendar-event-item.color-travel .event-dot,
+.event-card.color-travel::before {
+  background: #06B6D4;
+}
+
+.calendar-event-item.color-travel:hover:not(.past-event),
+.event-card.color-travel:hover {
+  background: rgba(6, 182, 212, 0.2);
+  border-left-color: #0891B2;
+}
+
+/* Celebrations - PINK/PURPLE */
+.calendar-event-item.color-celebration,
+.event-card.color-celebration {
+  background: rgba(236, 72, 153, 0.15);
+  border-left-color: #EC4899;
+  color: #BE185D;
+}
+
+.calendar-event-item.color-celebration .event-dot,
+.event-card.color-celebration::before {
+  background: #EC4899;
+}
+
+.calendar-event-item.color-celebration:hover:not(.past-event),
+.event-card.color-celebration:hover {
+  background: rgba(236, 72, 153, 0.25);
+  border-left-color: #DB2777;
+}
+
+/* Concerts/Shows - MAGENTA/PURPLE */
+.calendar-event-item.color-concert,
+.event-card.color-concert {
+  background: rgba(139, 92, 246, 0.15);
+  border-left-color: #8B5CF6;
+  color: #6D28D9;
+}
+
+.calendar-event-item.color-concert .event-dot,
+.event-card.color-concert::before {
+  background: #8B5CF6;
+}
+
+.calendar-event-item.color-concert:hover:not(.past-event),
+.event-card.color-concert:hover {
+  background: rgba(139, 92, 246, 0.25);
+  border-left-color: #7C3AED;
+}
+
+/* General - GRAY (Default) */
+.calendar-event-item.color-general,
+.event-card.color-general {
+  background: rgba(107, 114, 128, 0.1);
+  border-left-color: #6B7280;
+  color: #374151;
+}
+
+.calendar-event-item.color-general .event-dot,
+.event-card.color-general::before {
+  background: #6B7280;
+}
+
+.calendar-event-item.color-general:hover:not(.past-event),
+.event-card.color-general:hover {
+  background: rgba(107, 114, 128, 0.15);
+  border-left-color: #4B5563;
 }
 
 .calendar-event-item:hover:not(.past-event) {
@@ -552,6 +726,7 @@
 }
 
 .event-title-short {
+  min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -758,6 +933,61 @@
   gap: 0.5rem;
   margin-bottom: 1rem;
   flex-wrap: wrap;
+  align-items: center;
+  position: relative;
+}
+
+.delete-event-btn {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #DC2626;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.delete-event-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #DC2626;
+  transform: scale(1.1);
+  color: #B91C1C;
+}
+
+.delete-event-btn-small {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #DC2626;
+  padding: 0.125rem 0.25rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 0.875rem;
+}
+
+.delete-event-btn-small:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #DC2626;
+  transform: scale(1.15);
+  color: #B91C1C;
 }
 
 .event-type {
@@ -930,6 +1160,43 @@
 
 .event-card.general .event-type {
   background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+}
+
+/* Enhanced color coding for event type badges based on priority */
+.event-card.color-doctor .event-type {
+  background: linear-gradient(135deg, #FF6B35 0%, #FF4500 100%);
+}
+
+.event-card.color-todo .event-type {
+  background: linear-gradient(135deg, #FFD93D 0%, #FFC107 100%);
+}
+
+.event-card.color-everyday .event-type {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+}
+
+.event-card.color-work .event-type {
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+}
+
+.event-card.color-work-daily .event-type {
+  background: linear-gradient(135deg, #60A5FA 0%, #3B82F6 100%);
+}
+
+.event-card.color-travel .event-type {
+  background: linear-gradient(135deg, #06B6D4 0%, #0891B2 100%);
+}
+
+.event-card.color-celebration .event-type {
+  background: linear-gradient(135deg, #EC4899 0%, #DB2777 100%);
+}
+
+.event-card.color-concert .event-type {
+  background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+}
+
+.event-card.color-general .event-type {
+  background: linear-gradient(135deg, #6B7280 0%, #4B5563 100%);
 }
 
 .analyze-event-btn {

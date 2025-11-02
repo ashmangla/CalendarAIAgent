@@ -10,9 +10,15 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
   const [conflictData, setConflictData] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
   const [pendingEvent, setPendingEvent] = useState(null);
+  
+  // Conversation state for follow-up questions
+  const [conversationHistory, setConversationHistory] = useState([]);
+  const [followUpCount, setFollowUpCount] = useState(0);
+  const [isInFollowUpLoop, setIsInFollowUpLoop] = useState(false);
 
   const recognitionRef = useRef(null);
   const synthesisRef = useRef(null);
+  const autoListenTimeoutRef = useRef(null);
 
   // Initialize Web Speech API
   useEffect(() => {
@@ -31,7 +37,6 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     recognition.onstart = () => {
       setIsListening(true);
       setStatus('listening');
-      setTranscript('');
     };
 
     recognition.onresult = (event) => {
@@ -45,13 +50,22 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
       setIsListening(false);
       setStatus('idle');
       if (event.error === 'no-speech') {
-        speak('I didn\'t catch that. Please try again.');
+        if (isInFollowUpLoop) {
+          // Continue listening for follow-up
+          setTimeout(() => {
+            if (recognitionRef.current) {
+              recognitionRef.current.start();
+            }
+          }, 1000);
+        } else {
+          speak('I didn\'t catch that. Please try again.');
+        }
       }
     };
 
     recognition.onend = () => {
       setIsListening(false);
-      if (status === 'listening') {
+      if (!isInFollowUpLoop && status === 'listening') {
         setStatus('idle');
       }
     };
@@ -62,8 +76,11 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
+      if (autoListenTimeoutRef.current) {
+        clearTimeout(autoListenTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [isInFollowUpLoop, status]);
 
   // Initialize Speech Synthesis
   useEffect(() => {
@@ -72,8 +89,11 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     }
   }, []);
 
-  const speak = useCallback((text) => {
-    if (!synthesisRef.current) return;
+  const speak = useCallback((text, callback) => {
+    if (!synthesisRef.current) {
+      if (callback) callback();
+      return;
+    }
 
     // Cancel any ongoing speech
     synthesisRef.current.cancel();
@@ -90,22 +110,34 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
 
     utterance.onend = () => {
       setStatus('idle');
+      if (callback) {
+        callback();
+      }
     };
 
     utterance.onerror = (error) => {
       console.error('Speech synthesis error:', error);
       setStatus('idle');
+      if (callback) {
+        callback();
+      }
     };
 
     synthesisRef.current.speak(utterance);
   }, []);
 
   const startListening = () => {
+    // Reset conversation state
+    setConversationHistory([]);
+    setFollowUpCount(0);
+    setIsInFollowUpLoop(false);
+    setTranscript('');
+    setResponse('');
+    setConflictData(null);
+    setAlternatives([]);
+    setPendingEvent(null);
+
     if (recognitionRef.current && !isListening) {
-      setTranscript('');
-      setResponse('');
-      setConflictData(null);
-      setAlternatives([]);
       recognitionRef.current.start();
     }
   };
@@ -115,6 +147,9 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
       recognitionRef.current.stop();
       setIsListening(false);
       setStatus('idle');
+      setIsInFollowUpLoop(false);
+      setFollowUpCount(0);
+      setConversationHistory([]);
     }
   };
 
@@ -123,11 +158,13 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     setTranscript(transcriptText);
 
     try {
-      // Parse intent and extract event details
+      // Parse intent with conversation context
       const intentResponse = await axios.post('/api/voice/process', {
         transcript: transcriptText,
         context: {
-          currentDate: new Date().toISOString().split('T')[0]
+          currentDate: new Date().toISOString().split('T')[0],
+          conversationHistory: conversationHistory,
+          followUpCount: followUpCount
         }
       });
 
@@ -135,17 +172,70 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
         throw new Error(intentResponse.data.error || 'Failed to process voice input');
       }
 
-      const { intent, eventDetails } = intentResponse.data;
+      const { 
+        intent, 
+        eventDetails, 
+        followUpQuestion, 
+        readyToProcess, 
+        abort, 
+        abortMessage,
+        conversationHistory: updatedHistory 
+      } = intentResponse.data;
 
-      if (intent === 'add_event') {
-        await handleAddEvent(eventDetails);
-      } else {
-        const responseText = await generateResponse({
-          type: 'info',
-          message: `I understand you want to ${intent.replace('_', ' ')}, but I can currently only help with adding events.`
+      // Update conversation history
+      if (updatedHistory) {
+        setConversationHistory(updatedHistory);
+      }
+
+      // Handle abort scenario (max follow-ups reached)
+      if (abort && abortMessage) {
+        setResponse(abortMessage);
+        speak(abortMessage, () => {
+          setIsInFollowUpLoop(false);
+          setFollowUpCount(0);
+          setConversationHistory([]);
         });
-        setResponse(responseText);
-        speak(responseText);
+        return;
+      }
+
+      // Handle follow-up question
+      if (intent === 'needs_clarification' && followUpQuestion && followUpCount < 5) {
+        setResponse(followUpQuestion);
+        setFollowUpCount(prev => prev + 1);
+        setIsInFollowUpLoop(true);
+        
+        // Speak the question, then auto-start listening
+        speak(followUpQuestion, () => {
+          // Auto-start listening after speaking
+          autoListenTimeoutRef.current = setTimeout(() => {
+            if (recognitionRef.current && !isListening) {
+              recognitionRef.current.start();
+            }
+          }, 500);
+        });
+        return;
+      }
+
+      // Handle ready to process intents
+      if (readyToProcess) {
+        if (intent === 'add_event') {
+          await handleAddEvent(eventDetails);
+        } else if (intent === 'delete_event') {
+          await handleDeleteEvent(eventDetails);
+        } else if (intent === 'add_to_wishlist') {
+          await handleAddToWishlist(eventDetails);
+        } else {
+          const responseText = await generateResponse({
+            type: 'info',
+            message: `I understand you want to ${intent.replace('_', ' ')}, but I can currently help with adding or deleting events, or adding to wishlist.`
+          });
+          setResponse(responseText);
+          speak(responseText);
+        }
+        // Reset conversation state after processing
+        setIsInFollowUpLoop(false);
+        setFollowUpCount(0);
+        setConversationHistory([]);
       }
     } catch (error) {
       console.error('Error handling voice input:', error);
@@ -153,6 +243,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
       setResponse(errorMessage);
       speak(errorMessage);
       setStatus('idle');
+      setIsInFollowUpLoop(false);
     }
   };
 
@@ -190,6 +281,95 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     } catch (error) {
       console.error('Error checking conflict:', error);
       const errorMessage = 'Sorry, I couldn\'t check for conflicts. Please try again.';
+      setResponse(errorMessage);
+      speak(errorMessage);
+      setStatus('idle');
+    }
+  };
+
+  const handleAddToWishlist = async (eventDetails) => {
+    try {
+      const response = await axios.post('/api/voice/add-to-wishlist', {
+        eventDetails
+      });
+
+      if (response.data.success) {
+        const successMsg = response.data.response || `Added "${eventDetails.title}" to your wishlist! I'll suggest it when you have free time.`;
+        setResponse(successMsg);
+        speak(successMsg);
+        setStatus('idle');
+        
+        // Notify parent if callback exists (for refresh)
+        if (onEventAdded) {
+          onEventAdded(null); // Signal refresh
+        }
+      } else {
+        throw new Error(response.data.error || 'Failed to add to wishlist');
+      }
+    } catch (error) {
+      console.error('Error adding to wishlist:', error);
+      const errorMessage = error.response?.data?.error || 'Sorry, I couldn\'t add that to your wishlist. Please try again.';
+      setResponse(errorMessage);
+      speak(errorMessage);
+      setStatus('idle');
+    }
+  };
+
+  const handleDeleteEvent = async (eventDetails) => {
+    try {
+      // Find event to delete
+      if (!eventDetails.title && !eventDetails.date && !eventDetails.time) {
+        throw new Error('Not enough information to identify event for deletion');
+      }
+
+      // Find matching event in existing events
+      const matchingEvent = existingEvents.find(event => {
+        const eventDate = new Date(event.date).toISOString().split('T')[0];
+        const eventTime = event.time || new Date(event.date).toTimeString().slice(0, 5);
+        
+        const titleMatch = eventDetails.title ? 
+          event.title.toLowerCase().includes(eventDetails.title.toLowerCase()) : true;
+        const dateMatch = eventDetails.date ? 
+          eventDate === eventDetails.date : true;
+        const timeMatch = eventDetails.time ? 
+          eventTime === eventDetails.time : true;
+
+        return titleMatch && dateMatch && timeMatch;
+      });
+
+      if (!matchingEvent) {
+        const errorMsg = "I couldn't find a matching event to delete. Could you provide more details?";
+        setResponse(errorMsg);
+        speak(errorMsg);
+        return;
+      }
+
+      // Delete the event
+      const eventId = matchingEvent.id || matchingEvent.eventId;
+      const deleteResponse = await axios.delete(`/api/calendar/events/${eventId}`, {
+        withCredentials: true
+      });
+
+      if (deleteResponse.data.success) {
+        const successMsg = `I've deleted "${matchingEvent.title}" from your calendar.`;
+        setResponse(successMsg);
+        speak(successMsg);
+        
+        // Refresh events (notify parent to refresh)
+        if (onEventAdded) {
+          onEventAdded(null); // Parent will handle null as refresh signal
+        }
+        // Reset conversation state after successful deletion
+        setIsInFollowUpLoop(false);
+        setFollowUpCount(0);
+        setConversationHistory([]);
+        setStatus('idle');
+      } else {
+        throw new Error('Failed to delete event');
+      }
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      const errorMessage = error.response?.data?.error || 'Sorry, I couldn\'t delete that event. Please try again.';
       setResponse(errorMessage);
       speak(errorMessage);
       setStatus('idle');
@@ -308,6 +488,9 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
             {status === 'processing' && 'Processing...'}
             {status === 'speaking' && 'Speaking...'}
           </span>
+          {isInFollowUpLoop && (
+            <span className="follow-up-indicator">(Question {followUpCount}/5)</span>
+          )}
         </div>
       </div>
 
@@ -378,4 +561,3 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
 };
 
 export default VoiceAssistant;
-
