@@ -32,7 +32,9 @@
       "Bash(cmd /c \"taskkill /F /T /PID 15396\")",
       "Bash(powershell -Command \"Stop-Process -Id 15396 -Force\")",
       "Bash(powershell -Command \"Stop-Process -Id 23700 -Force\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(npm run build:*)",
+      "Bash(cmd /c \"dir client\\src\\components\\CalendarEvents.js\")"
     ],
     "deny": [],
     "ask": []

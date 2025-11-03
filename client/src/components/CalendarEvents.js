@@ -819,14 +819,14 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                                   restOfDescription = event.description.replace(/AI-generated preparation task for "(.+?)"\.\n\n/, '');
                                 } else if (matchEventId) {
                                   // Use stored originalEventTitle, otherwise use fallback
-                                  originalTitle = event.originalEventTitle || 'the event';
+                                  originalTitle = event.originalEventTitle || undefined;
                                   restOfDescription = event.description.replace(/AI-generated preparation task for event ID .+?\.\n\n/, '');
                                 }
 
                                 return (
                                   <>
                                     <strong style={{ color: '#8b5cf6', fontSize: '0.75rem', display: 'block', marginBottom: '0.5rem' }}>
-                                      Prep for: {originalTitle}
+                                      {originalTitle ? `Prep for: ${originalTitle}` : undefined}
                                     </strong>
                                     {restOfDescription}
                                   </>
