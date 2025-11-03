@@ -50,6 +50,34 @@ class EventsStore {
   findEventById(id) {
     return this.events.find(e => e.id === id || e.eventId === id);
   }
+
+  /**
+   * Update an existing event
+   * @param {string} eventId - Event ID to update
+   * @param {Object} updates - Properties to update
+   */
+  updateEvent(eventId, updates) {
+    const index = this.events.findIndex(e => e.id === eventId || e.eventId === eventId);
+    if (index !== -1) {
+      this.events[index] = { ...this.events[index], ...updates };
+      return this.events[index];
+    }
+    return null;
+  }
+
+  /**
+   * Delete an event from the store
+   * @param {string} eventId - Event ID to delete
+   */
+  deleteEvent(eventId) {
+    const index = this.events.findIndex(e => e.id === eventId || e.eventId === eventId);
+    if (index !== -1) {
+      const deleted = this.events.splice(index, 1)[0];
+      console.log(`🗑️ Deleted event from store: ${deleted.title} (ID: ${eventId})`);
+      return deleted;
+    }
+    return null;
+  }
 }
 
 module.exports = new EventsStore();

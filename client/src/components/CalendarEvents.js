@@ -17,6 +17,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
   const [weatherData, setWeatherData] = useState({});
+  const [lastMorningReviewDate, setLastMorningReviewDate] = useState(null);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
@@ -119,6 +120,31 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
       console.log('🌤️ Skipping - showTodayOnly:', showTodayOnly, 'events.length:', events.length);
     }
   }, [events, showTodayOnly, fetchWeatherForTodayEvents]);
+
+  // Morning review: Check if it's a new day and suggest wishlist review
+  useEffect(() => {
+    const checkMorningReview = () => {
+      const today = new Date().toDateString();
+      const storedReviewDate = localStorage.getItem('lastMorningReviewDate');
+      
+      // If it's a new day and we haven't shown review today
+      if ((!lastMorningReviewDate || lastMorningReviewDate !== today) && 
+          (!storedReviewDate || storedReviewDate !== today) && 
+          events.length > 0) {
+        // Check if it's morning (between 6 AM and 11 AM)
+        const currentHour = new Date().getHours();
+        if (currentHour >= 6 && currentHour < 11) {
+          // Store that we checked today (don't auto-open, user can click button)
+          setLastMorningReviewDate(today);
+          localStorage.setItem('lastMorningReviewDate', today);
+        }
+      }
+    };
+
+    if (events.length > 0 && !showAuthModal && !showTodayOnly) {
+      checkMorningReview();
+    }
+  }, [events, lastMorningReviewDate, showAuthModal, showTodayOnly]);
 
   // Handle Google authentication success
   const handleGoogleAuthSuccess = (user) => {
@@ -333,6 +359,125 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     });
   };
 
+  // Cache for color classifications (to avoid repeated calculations)
+  const [colorCache, setColorCache] = useState(new Map());
+
+  // Get color class using hybrid approach: Google colors → Cache → Expanded Keyword Rules
+  // LLM fallback can be added later via API endpoint if needed
+  const getEventColorClassSync = (event) => {
+    if (!event) return 'color-general';
+    
+    // Check cache first
+    const cacheKey = (event.title || '').toLowerCase().trim();
+    if (cacheKey && colorCache.has(cacheKey)) {
+      return colorCache.get(cacheKey);
+    }
+    
+    // Check Google Calendar colorId
+    if (event.colorId && event.source === 'google') {
+      const googleColorMap = {
+        1: 'color-general', 2: 'color-everyday', 3: 'color-concert',
+        4: 'color-celebration', 5: 'color-todo', 6: 'color-doctor',
+        7: 'color-travel', 8: 'color-general', 9: 'color-work',
+        10: 'color-everyday', 11: 'color-doctor'
+      };
+      const colorClass = googleColorMap[event.colorId] || 'color-general';
+      if (cacheKey) {
+        setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      }
+      return colorClass;
+    }
+    
+    // Expanded keyword rules (inline for performance)
+    const eventType = (event.type || '').toLowerCase();
+    const eventTitle = (event.title || '').toLowerCase();
+    const eventCategory = (event.category || '').toLowerCase();
+    const combinedText = `${eventTitle} ${eventType} ${eventCategory}`.toLowerCase();
+    
+    // Doctor/Medical (highest priority)
+    if (combinedText.includes('doctor') || combinedText.includes('appointment') || 
+        combinedText.includes('medical') || combinedText.includes('dentist') || 
+        combinedText.includes('clinic')) {
+      const colorClass = 'color-doctor';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Daily/Scrum/Standup - Lighter Blue
+    if (combinedText.includes('scrum') || combinedText.includes('standup') || 
+        combinedText.includes('stand-up') || combinedText.includes('daily') || 
+        combinedText.includes('dailies') || combinedText.includes('huddle')) {
+      const colorClass = 'color-work-daily';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Work events - Expanded keywords
+    const workKeywords = [
+      'roadmap', 'roadmapping', 'planning', 'strategy', 'sprint', 'meeting', 'call',
+      'sync', 'project', 'work', 'vas', 'review', 'retro', 'grooming', 'estimation',
+      'epic', 'feature', 'jira', 'confluence', 'architecture', 'design review',
+      'code review', 'deploy', 'release', 'qa', 'testing', 'milestone', 'stakeholder',
+      'alignment', 'status', 'demo', 'workshop', 'training', 'onboarding', 'kickoff',
+      'one-on-one', '1-on-1', 'team', 'all-hands', 'town hall'
+    ];
+    
+    if (workKeywords.some(keyword => combinedText.includes(keyword)) || 
+        eventType === 'work' || eventType === 'meeting') {
+      const colorClass = 'color-work';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // To-dos
+    if (combinedText.includes('todo') || combinedText.includes('to-do') || 
+        combinedText.includes('reminder') || combinedText.includes('task') || 
+        combinedText.includes('due') || combinedText.includes('deadline')) {
+      const colorClass = 'color-todo';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Everyday tasks
+    if (combinedText.includes('practice') || combinedText.includes('gym') || 
+        combinedText.includes('exercise') || combinedText.includes('workout') ||
+        eventType === 'band practice' || eventCategory === 'preparation') {
+      const colorClass = 'color-everyday';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Travel
+    if (combinedText.includes('travel') || combinedText.includes('trip') || 
+        combinedText.includes('flight') || eventType === 'travel') {
+      const colorClass = 'color-travel';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Celebrations
+    if (combinedText.includes('birthday') || combinedText.includes('anniversary') || 
+        combinedText.includes('party') || combinedText.includes('celebration') ||
+        eventType === 'celebration') {
+      const colorClass = 'color-celebration';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Concerts
+    if (combinedText.includes('concert') || combinedText.includes('show') || 
+        combinedText.includes('music') || eventType === 'concert') {
+      const colorClass = 'color-concert';
+      if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+      return colorClass;
+    }
+    
+    // Default
+    const colorClass = 'color-general';
+    if (cacheKey) setColorCache(prev => new Map(prev).set(cacheKey, colorClass));
+    return colorClass;
+  };
+
   const getEventTypeClass = (type) => {
     return type.replace(/\s+/g, '-').toLowerCase();
   };
@@ -340,15 +485,25 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   // Group events by date for calendar grid
   const groupEventsByDate = () => {
     const grouped = {};
-    events.forEach(event => {
-      const eventDate = new Date(event.date);
-      const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
-      
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = [];
-      }
-      grouped[dateKey].push(event);
-    });
+    events
+      .filter(event => event && event.date) // Filter out null/undefined events
+      .forEach(event => {
+        try {
+          const eventDate = new Date(event.date);
+          if (isNaN(eventDate.getTime())) {
+            console.warn('Invalid event date:', event);
+            return; // Skip invalid dates
+          }
+          const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          
+          if (!grouped[dateKey]) {
+            grouped[dateKey] = [];
+          }
+          grouped[dateKey].push(event);
+        } catch (error) {
+          console.warn('Error processing event:', event, error);
+        }
+      });
     return grouped;
   };
 
@@ -466,7 +621,49 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     }
   }, [selectedEvent]);
 
+  const handleDeleteEvent = async (event, e) => {
+    e.stopPropagation(); // Prevent event card click
+    
+    const confirmMessage = `Are you sure you want to delete "${event.title}"?`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      const eventId = event.id || event.eventId;
+      const response = await axios.delete(`/api/calendar/events/${eventId}`, {
+        withCredentials: true
+      });
+
+      if (response.data.success) {
+        // Remove from local state
+        setEvents(prevEvents => 
+          prevEvents.filter(e => (e.id || e.eventId) !== eventId)
+        );
+        
+        // Close analysis panel if this event was selected
+        if (selectedEvent && (selectedEvent.id || selectedEvent.eventId) === eventId) {
+          setShowAnalysis(false);
+          setSelectedEvent(null);
+        }
+
+        // Show success message
+        alert('Event deleted successfully');
+      } else {
+        alert('Failed to delete event. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('Error deleting event. Please try again.');
+    }
+  };
+
   const handleVoiceEventAdded = useCallback((newEvent) => {
+    // If newEvent is null, just refresh events (for deletion case)
+    if (!newEvent) {
+      fetchEvents();
+      return;
+    }
     // Add the new event to the events list immediately for instant feedback
     setEvents(prevEvents => [...prevEvents, newEvent]);
     // Refresh events after a short delay to get updated list from Google Calendar
@@ -542,6 +739,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
           existingEvents={events}
         />
       )}
+
       
       <div className="calendar-content">
         {showTodayOnly ? (
@@ -568,7 +766,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                   return (
                   <div
                     key={event.id}
-                    className={`event-card ${getEventTypeClass(event.type)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
+                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
                     onClick={() => canClick && handleAnalyzeEvent(event)}
                     title={getTitle()}
                     style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -583,6 +781,13 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                       <span className={`event-type ${getEventTypeClass(event.type)}`}>
                         {event.type}
                       </span>
+                      <button
+                        className="delete-event-btn"
+                        onClick={(e) => handleDeleteEvent(event, e)}
+                        title="Delete event"
+                      >
+                        🗑️
+                      </button>
                     </div>
                     <h3 className="event-title">{event.title}</h3>
                     <div className="event-card-body">
@@ -709,7 +914,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                           return (
                           <div
                             key={event.id}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
                             onClick={() => canClick && handleAnalyzeEvent(event)}
                             title={getTitle()}
                             style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -726,6 +931,14 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                               <span className="checklist-badge-small" title="Generated event from checklist (cannot be analyzed)">📋</span>
                             )}
                             {event.isRecurring && <span className="recurring-icon">🔄</span>}
+                            <button
+                              className="delete-event-btn-small"
+                              onClick={(e) => handleDeleteEvent(event, e)}
+                              title="Delete event"
+                              aria-label="Delete event"
+                            >
+                              ×
+                            </button>
                           </div>
                           );
                         })}
@@ -766,6 +979,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
             )}
           </div>
         )}
+
       </div>
     </div>
   );
