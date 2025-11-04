@@ -25,7 +25,8 @@ router.get('/auth-url', (req, res) => {
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/userinfo.email',
-      'https://www.googleapis.com/auth/userinfo.profile'
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/drive.readonly' // For Google Docs access (Phase 1)
     ];
     
     const authUrl = oauth2Client.generateAuthUrl({

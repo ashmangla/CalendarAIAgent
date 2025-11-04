@@ -1,7 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import axios from 'axios';
 import './App.css';
 import CalendarEvents from './components/CalendarEvents';
 import Wishlist from './components/Wishlist';
+import VoiceAssistant from './components/VoiceAssistant';
 import logo from './images/Logo.png';
 
 function App() {
@@ -11,6 +13,11 @@ function App() {
   const [disconnectHandler, setDisconnectHandler] = useState(null);
   const [refreshEventsHandler, setRefreshEventsHandler] = useState(null);
   const [voiceAssistantHandler, setVoiceAssistantHandler] = useState(null);
+  const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
+  const [events, setEvents] = useState([]);
+  const eventsRef = useRef([]);
+  const [wishlistItems, setWishlistItems] = useState([]);
+  const wishlistItemsRef = useRef([]);
 
   const handleDisconnect = () => {
     if (disconnectHandler) {
@@ -48,10 +55,60 @@ function App() {
   }, []);
 
   const handleVoiceAssistant = () => {
-    if (voiceAssistantHandler) {
-      voiceAssistantHandler();
-    }
+    setShowVoiceAssistant(prev => !prev);
   };
+
+  // Handle events update from CalendarEvents
+  const handleEventsUpdate = useCallback((newEvents) => {
+    setEvents(newEvents);
+    eventsRef.current = newEvents;
+  }, []);
+
+  // Fetch events for voice assistant (needed for conflict checking)
+  const fetchEventsForVoice = useCallback(async () => {
+    try {
+      const response = await axios.get('/api/calendar/events');
+      if (response.data.success) {
+        const fetchedEvents = response.data.events || [];
+        setEvents(fetchedEvents);
+        eventsRef.current = fetchedEvents;
+        return fetchedEvents;
+      }
+      return eventsRef.current;
+    } catch (error) {
+      console.error('Error fetching events for voice assistant:', error);
+      return eventsRef.current || [];
+    }
+  }, []);
+
+  // Fetch wishlist items for voice assistant context
+  const fetchWishlistForVoice = useCallback(async () => {
+    try {
+      const response = await axios.get('/api/wishlist/items');
+      if (response.data.success) {
+        const items = response.data.items || [];
+        setWishlistItems(items);
+        wishlistItemsRef.current = items;
+        return items;
+      }
+      return wishlistItemsRef.current || [];
+    } catch (error) {
+      console.error('Error fetching wishlist for voice assistant:', error);
+      return wishlistItemsRef.current || [];
+    }
+  }, []);
+
+  // Fetch events and wishlist when voice assistant is opened (if not already loaded)
+  useEffect(() => {
+    if (showVoiceAssistant) {
+      if (eventsRef.current.length === 0) {
+        fetchEventsForVoice();
+      }
+      if (wishlistItemsRef.current.length === 0) {
+        fetchWishlistForVoice();
+      }
+    }
+  }, [showVoiceAssistant, fetchEventsForVoice, fetchWishlistForVoice]);
 
   return (
     <div className="App">
@@ -62,23 +119,21 @@ function App() {
             MotherBoard
           </h1>
           <div className="header-actions">
+            <button
+              className="header-action-btn voice-btn"
+              onClick={handleVoiceAssistant}
+              title="Voice Assistant"
+            >
+              🎤 Voice
+            </button>
             {(activeTab === 'calendar' || activeTab === 'today') && (
-              <>
-                <button
-                  className="header-action-btn"
-                  onClick={handleRefreshEvents}
-                  title="Refresh Events"
-                >
-                  🔄 Refresh
-                </button>
-                <button
-                  className="header-action-btn voice-btn"
-                  onClick={handleVoiceAssistant}
-                  title="Voice Assistant"
-                >
-                  🎤 Voice
-                </button>
-              </>
+              <button
+                className="header-action-btn"
+                onClick={handleRefreshEvents}
+                title="Refresh Events"
+              >
+                🔄 Refresh
+              </button>
             )}
             {isGoogleConnected && userInfo && (
               <div className="google-user-info-header">
@@ -174,6 +229,7 @@ function App() {
               onDisconnectRequest={handleDisconnectRequest}
               onRefreshEventsRequest={handleRefreshEventsRequest}
               onVoiceAssistantRequest={handleVoiceAssistantRequest}
+              onEventsUpdate={handleEventsUpdate}
               showTodayOnly={true}
             />
           )}
@@ -184,6 +240,7 @@ function App() {
               onDisconnectRequest={handleDisconnectRequest}
               onRefreshEventsRequest={handleRefreshEventsRequest}
               onVoiceAssistantRequest={handleVoiceAssistantRequest}
+              onEventsUpdate={handleEventsUpdate}
             />
           )}
 
@@ -195,7 +252,29 @@ function App() {
                   refreshEventsHandler();
                 }
               }}
+              onWishlistUpdate={fetchWishlistForVoice}
             />
+          )}
+
+          {/* Global Voice Assistant - Available on all tabs */}
+          {showVoiceAssistant && (
+            <div className="global-voice-assistant-container">
+              <VoiceAssistant
+                onEventAdded={(newEvent) => {
+                  // Refresh events if handler exists
+                  if (refreshEventsHandler) {
+                    refreshEventsHandler();
+                  }
+                  // Fetch fresh events and wishlist for voice assistant
+                  fetchEventsForVoice();
+                  fetchWishlistForVoice();
+                }}
+                userInfo={userInfo}
+                existingEvents={eventsRef.current}
+                existingWishlistItems={wishlistItemsRef.current}
+                onClose={() => setShowVoiceAssistant(false)}
+              />
+            </div>
           )}
       </div>
     </div>

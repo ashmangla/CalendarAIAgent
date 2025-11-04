@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './Wishlist.css';
 
-const Wishlist = () => {
+const Wishlist = ({ onWishlistUpdate }) => {
   const [wishlistItems, setWishlistItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [matches, setMatches] = useState([]);
   const [findingTime, setFindingTime] = useState(false);
   const [showMatches, setShowMatches] = useState(false);
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editForm, setEditForm] = useState({ title: '', description: '', location: '' });
+  const [newItemForm, setNewItemForm] = useState({ title: '', description: '', location: '' });
+  const [addingItem, setAddingItem] = useState(false);
 
   useEffect(() => {
     fetchWishlistItems();
@@ -22,7 +26,18 @@ const Wishlist = () => {
       const response = await axios.get('/api/wishlist/items');
       if (response.data.success) {
         // Server automatically filters out past/scheduled items
-        setWishlistItems(response.data.items || []);
+        // Sort by createdAt (chronological order - oldest first)
+        const items = (response.data.items || []).sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0);
+          const dateB = new Date(b.createdAt || 0);
+          return dateA - dateB; // Oldest first
+        });
+        setWishlistItems(items);
+        
+        // Notify parent of wishlist update
+        if (onWishlistUpdate) {
+          onWishlistUpdate(items);
+        }
       }
     } catch (error) {
       console.error('Error fetching wishlist items:', error);
@@ -38,6 +53,76 @@ const Wishlist = () => {
     } catch (error) {
       console.error('Error deleting wishlist item:', error);
       alert('Failed to delete wishlist item');
+    }
+  };
+
+  const handleStartEdit = (item) => {
+    setEditingItemId(item.id);
+    setEditForm({
+      title: item.title || '',
+      description: item.description || '',
+      location: item.location || ''
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItemId(null);
+    setEditForm({ title: '', description: '', location: '' });
+  };
+
+  const handleSaveEdit = async (itemId) => {
+    try {
+      const response = await axios.put(`/api/wishlist/items/${itemId}`, {
+        title: editForm.title,
+        description: editForm.description,
+        location: editForm.location
+      });
+
+      if (response.data.success) {
+        await fetchWishlistItems();
+        setEditingItemId(null);
+        setEditForm({ title: '', description: '', location: '' });
+      } else {
+        throw new Error(response.data.error || 'Failed to update item');
+      }
+    } catch (error) {
+      console.error('Error updating wishlist item:', error);
+      alert('Failed to update wishlist item. Please try again.');
+    }
+  };
+
+  const handleAddItem = async () => {
+    if (!newItemForm.title.trim()) {
+      alert('Please enter a title for the wishlist item');
+      return;
+    }
+
+    setAddingItem(true);
+    try {
+      const response = await axios.post('/api/wishlist/items', {
+        title: newItemForm.title,
+        description: newItemForm.description || null,
+        location: newItemForm.location || null,
+        priority: 'medium'
+      });
+
+      if (response.data.success) {
+        await fetchWishlistItems();
+        setNewItemForm({ title: '', description: '', location: '' });
+        
+        // Notify parent
+        if (onWishlistUpdate) {
+          await fetchWishlistItems();
+          onWishlistUpdate(wishlistItems);
+        }
+      } else {
+        throw new Error(response.data.error || 'Failed to add item');
+      }
+    } catch (error) {
+      console.error('Error adding wishlist item:', error);
+      alert('Failed to add wishlist item. Please try again.');
+    } finally {
+      setAddingItem(false);
     }
   };
 
@@ -131,6 +216,56 @@ const Wishlist = () => {
         </button>
       </div>
 
+      {/* Manual Add Item Form */}
+      <div className="add-item-section">
+        <h3>Add New Item</h3>
+        <div className="add-item-form">
+          <input
+            type="text"
+            className="add-item-input"
+            value={newItemForm.title}
+            onChange={(e) => setNewItemForm({ ...newItemForm, title: e.target.value })}
+            placeholder="Enter item title (e.g., Visit art museum)"
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleAddItem();
+              }
+            }}
+          />
+          <input
+            type="text"
+            className="add-item-input"
+            value={newItemForm.location || ''}
+            onChange={(e) => setNewItemForm({ ...newItemForm, location: e.target.value })}
+            placeholder="Location (optional)"
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleAddItem();
+              }
+            }}
+          />
+          <textarea
+            className="add-item-textarea"
+            value={newItemForm.description || ''}
+            onChange={(e) => setNewItemForm({ ...newItemForm, description: e.target.value })}
+            placeholder="Description (optional)"
+            rows="2"
+          />
+          <button
+            className="add-item-submit-btn"
+            onClick={handleAddItem}
+            disabled={addingItem || !newItemForm.title.trim()}
+          >
+            {addingItem ? '⏳ Adding...' : '➕ Add to Wishlist'}
+          </button>
+        </div>
+        <p className="add-item-hint">
+          💡 You can also use the Voice Assistant (🎤 button in header) to add items by voice
+        </p>
+      </div>
+
       {showMatches && matches.length > 0 && (
         <div className="matches-section">
           <h3>✨ Suggested Times</h3>
@@ -182,22 +317,83 @@ const Wishlist = () => {
         </div>
       ) : (
         <div className="wishlist-list">
-          {wishlistItems.map(item => (
-            <div key={item.id} className="wishlist-item">
-              <div className="item-content">
-                <h4>{item.title}</h4>
-                {item.location && <p className="item-location">📍 {item.location}</p>}
-                {item.description && <p className="item-description">{item.description}</p>}
+          {wishlistItems.map(item => {
+            const isEditing = editingItemId === item.id;
+            return (
+              <div key={item.id} className={`wishlist-item ${isEditing ? 'editing' : ''}`}>
+                {isEditing ? (
+                  <div className="edit-item-form">
+                    <input
+                      type="text"
+                      className="edit-item-input"
+                      value={editForm.title}
+                      onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                      placeholder="Title"
+                    />
+                    <input
+                      type="text"
+                      className="edit-item-input"
+                      value={editForm.location || ''}
+                      onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                      placeholder="Location (optional)"
+                    />
+                    <textarea
+                      className="edit-item-textarea"
+                      value={editForm.description || ''}
+                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                      placeholder="Description (optional)"
+                      rows="3"
+                    />
+                    <div className="edit-item-actions">
+                      <button
+                        className="save-edit-btn"
+                        onClick={() => handleSaveEdit(item.id)}
+                      >
+                        ✓ Save
+                      </button>
+                      <button
+                        className="cancel-edit-btn"
+                        onClick={handleCancelEdit}
+                      >
+                        ✗ Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="item-content">
+                      <h4>{item.title}</h4>
+                      {item.location && <p className="item-location">📍 {item.location}</p>}
+                      {item.description && <p className="item-description">{item.description}</p>}
+                      <p className="item-date">Added: {new Date(item.createdAt).toLocaleDateString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric', 
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}</p>
+                    </div>
+                    <div className="item-actions">
+                      <button
+                        className="edit-item-btn"
+                        onClick={() => handleStartEdit(item)}
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="delete-item-btn"
+                        onClick={() => handleDeleteItem(item.id)}
+                        title="Delete"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-              <button
-                className="delete-item-btn"
-                onClick={() => handleDeleteItem(item.id)}
-                title="Delete"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

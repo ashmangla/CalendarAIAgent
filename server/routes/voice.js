@@ -45,6 +45,9 @@ router.post('/process', async (req, res) => {
       success: true,
       intent: intentResult.intent,
       eventDetails: intentResult.eventDetails || {},
+      wishlistItemId: intentResult.wishlistItemId || null,
+      wishlistItemMatch: intentResult.wishlistItemMatch || null,
+      updates: intentResult.updates || null,
       followUpQuestion: intentResult.followUpQuestion || null,
       missingInfo: intentResult.missingInfo || [],
       confidence: intentResult.confidence || 0.8,
@@ -519,6 +522,143 @@ router.post('/generate-response', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to generate response'
+    });
+  }
+});
+
+/**
+ * Update wishlist item via voice
+ */
+router.post('/update-wishlist', async (req, res) => {
+  try {
+    const { wishlistItemId, wishlistItemMatch, updates } = req.body;
+    const wishlistStore = require('../services/wishlistStore');
+
+    if (!updates || Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Updates are required'
+      });
+    }
+
+    let itemToUpdate = null;
+
+    // Priority 1: Use LLM-provided ID (most accurate, semantic matching)
+    if (wishlistItemId) {
+      itemToUpdate = wishlistStore.getItemById(wishlistItemId);
+      if (itemToUpdate) {
+        console.log(`✅ Found wishlist item by LLM-provided ID: ${itemToUpdate.title}`);
+      } else {
+        console.warn(`⚠️ LLM provided ID "${wishlistItemId}" but item not found, falling back to keyword matching`);
+      }
+    }
+
+    // Priority 2: Fallback to keyword matching (if LLM couldn't confidently match)
+    if (!itemToUpdate && wishlistItemMatch) {
+      const items = wishlistStore.getItems();
+      const matchLower = wishlistItemMatch.toLowerCase();
+      // Find best match (exact match preferred, then contains)
+      itemToUpdate = items.find(item => 
+        item.title.toLowerCase() === matchLower
+      ) || items.find(item => 
+        item.title.toLowerCase().includes(matchLower) ||
+        matchLower.includes(item.title.toLowerCase())
+      );
+      
+      if (itemToUpdate) {
+        console.log(`✅ Found wishlist item by keyword match: ${itemToUpdate.title}`);
+      }
+    }
+
+    if (!itemToUpdate) {
+      return res.status(404).json({
+        success: false,
+        error: 'Wishlist item not found. Please specify which item to update (e.g., "update the museum visit").'
+      });
+    }
+
+    const updated = wishlistStore.updateItem(itemToUpdate.id, updates);
+
+    const response = await voiceAdapter.generateResponse({
+      type: 'wishlist_updated',
+      itemTitle: updated.title
+    });
+
+    res.json({
+      success: true,
+      item: updated,
+      response: response || `Updated "${updated.title}" in your wishlist.`
+    });
+  } catch (error) {
+    console.error('Error updating wishlist item:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update wishlist item'
+    });
+  }
+});
+
+/**
+ * Delete wishlist item via voice
+ */
+router.post('/delete-wishlist', async (req, res) => {
+  try {
+    const { wishlistItemId, wishlistItemMatch } = req.body;
+    const wishlistStore = require('../services/wishlistStore');
+
+    let itemToDelete = null;
+
+    // Priority 1: Use LLM-provided ID (most accurate, semantic matching)
+    if (wishlistItemId) {
+      itemToDelete = wishlistStore.getItemById(wishlistItemId);
+      if (itemToDelete) {
+        console.log(`✅ Found wishlist item by LLM-provided ID: ${itemToDelete.title}`);
+      } else {
+        console.warn(`⚠️ LLM provided ID "${wishlistItemId}" but item not found, falling back to keyword matching`);
+      }
+    }
+
+    // Priority 2: Fallback to keyword matching (if LLM couldn't confidently match)
+    if (!itemToDelete && wishlistItemMatch) {
+      const items = wishlistStore.getItems();
+      const matchLower = wishlistItemMatch.toLowerCase();
+      // Find best match (exact match preferred, then contains)
+      itemToDelete = items.find(item => 
+        item.title.toLowerCase() === matchLower
+      ) || items.find(item => 
+        item.title.toLowerCase().includes(matchLower) ||
+        matchLower.includes(item.title.toLowerCase())
+      );
+      
+      if (itemToDelete) {
+        console.log(`✅ Found wishlist item by keyword match: ${itemToDelete.title}`);
+      }
+    }
+
+    if (!itemToDelete) {
+      return res.status(404).json({
+        success: false,
+        error: 'Wishlist item not found. Please specify which item to delete (e.g., "delete the museum visit").'
+      });
+    }
+
+    const deleted = wishlistStore.deleteItem(itemToDelete.id);
+
+    const response = await voiceAdapter.generateResponse({
+      type: 'wishlist_deleted',
+      itemTitle: deleted.title
+    });
+
+    res.json({
+      success: true,
+      item: deleted,
+      response: response || `Removed "${deleted.title}" from your wishlist.`
+    });
+  } catch (error) {
+    console.error('Error deleting wishlist item:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete wishlist item'
     });
   }
 });

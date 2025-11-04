@@ -3,9 +3,8 @@ import axios from 'axios';
 import EventAnalysis from './EventAnalysis';
 import EventDetails from './EventDetails';
 import GoogleAuth from './GoogleAuth';
-import VoiceAssistant from './VoiceAssistant';
 
-const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEventsRequest, onVoiceAssistantRequest, showTodayOnly = false }) => {
+const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEventsRequest, onVoiceAssistantRequest, onEventsUpdate, showTodayOnly = false }) => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -204,6 +203,13 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
       onRefreshEventsRequest(fetchEvents);
     }
   }, [onRefreshEventsRequest, fetchEvents]);
+
+  // Notify parent when events change
+  useEffect(() => {
+    if (onEventsUpdate) {
+      onEventsUpdate(events);
+    }
+  }, [events, onEventsUpdate]);
 
   // Expose voice assistant toggle handler to parent
   useEffect(() => {
@@ -732,15 +738,6 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
         </div>
       </div>
 
-      {!showAuthModal && showVoiceAssistant && (
-        <VoiceAssistant
-          onEventAdded={handleVoiceEventAdded}
-          userInfo={userInfo}
-          existingEvents={events}
-        />
-      )}
-
-      
       <div className="calendar-content">
         {showTodayOnly ? (
           // Today's Events List View
