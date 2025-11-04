@@ -1384,8 +1384,7 @@
   position: sticky;
   top: 2rem;
   max-height: calc(100vh - 4rem);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   box-sizing: border-box;
 }
 

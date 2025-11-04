@@ -16,27 +16,16 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [isChecklistEvent, setIsChecklistEvent] = useState(false);
   const [isGeneratedEvent, setIsGeneratedEvent] = useState(false);
   const [fromCache, setFromCache] = useState(false);
-  const [metadata, setMetadata] = useState(null);
   const [showDescriptionEditor, setShowDescriptionEditor] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
   const [detectedDocUrls, setDetectedDocUrls] = useState([]);
   
-  // Check if event type suggests transportation might be needed
+  // Check if any of the preparation tasks involve transportation
   const needsTransportation = () => {
-    if (!event) return false;
-    const eventType = (event.type || '').toLowerCase();
-    const eventTitle = (event.title || '').toLowerCase();
-    const eventLocation = (event.location || '').toLowerCase();
-    
-    // Events that typically need transportation
-    const transportationNeededTypes = ['travel', 'meeting', 'pickup', 'celebration', 'concert'];
-    const transportationKeywords = ['trip', 'meetup', 'appointment', 'visit'];
-    
-    return (
-      transportationNeededTypes.includes(eventType) ||
-      transportationKeywords.some(keyword => eventTitle.includes(keyword)) ||
-      (eventLocation && eventLocation.length > 0) // If there's a location, might need transportation
-    );
+    if (!analysis || !analysis.preparationTasks) return false;
+
+    // Check if any task is a transportation task
+    return analysis.preparationTasks.some(task => isTransportationTask(task));
   };
 
   const analyzeEvent = useCallback(async () => {
@@ -60,11 +49,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
         // setIsAlreadyAnalyzed(true); // REMOVED - now set only when tasks are added
         const wasFromCache = response.data.fromCache || false;
         setFromCache(wasFromCache);
-
-        // Store metadata
-        if (response.data.metadata) {
-          setMetadata(response.data.metadata);
-        }
 
         // Don't notify parent that event was analyzed yet
         // Only notify after tasks are actually added to the calendar
@@ -113,10 +97,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       case 'low': return '#2ed573';
       default: return '#747d8c';
     }
-  };
-
-  const formatTimelineDay = (day) => {
-    return day.replace(/(\d+)\s+(day|week|hour)/, '$1 $2');
   };
 
   const handleTaskSelection = (task, isSelected) => {
@@ -768,73 +748,46 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                 </div>
               </div>
 
-              <div className="timeline-section">
-                <h5>⏰ Preparation Timeline</h5>
-                <div className="timeline">
-                  {Object.entries(analysis.timeline).map(([timeframe, tasks]) => (
-                    <div key={timeframe} className="timeline-item">
-                      <div className="timeline-marker"></div>
-                      <div className="timeline-content">
-                        <h6>{formatTimelineDay(timeframe)}</h6>
-                        <ul>
-                          {tasks.map((task, index) => (
-                            <li key={index}>{task}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="tips-section">
-                <h5>💡 Pro Tips</h5>
-                <ul className="tips-list">
-                  {analysis.tips.map((tip, index) => (
-                    <li key={index}>{tip}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="analysis-actions">
-                <div className="selected-tasks-info">
-                  {selectedTasks.length > 0 && (
-                    <p>{selectedTasks.length} task{selectedTasks.length !== 1 ? 's' : ''} selected</p>
-                  )}
-                </div>
-                <div className="action-buttons">
-                  {/* Show Uber booking button for events that need transportation */}
-                  {needsTransportation() && (
-                    <button 
-                      className="uber-booking-btn" 
-                      onClick={() => setShowUberModal(true)}
-                      title="Book an Uber ride for this event"
-                    >
-                      🚕 Book Uber Ride
-                    </button>
-                  )}
-                  <button 
-                    className="add-tasks-btn" 
-                    onClick={addSelectedTasksToCalendar}
-                    disabled={selectedTasks.length === 0 || addingTasks}
-                  >
-                    {addingTasks ? '⏳ Adding...' : '📅 Add Selected to Calendar'}
-                  </button>
-                  {!isChecklistEvent && !isGeneratedEvent && (
-                    <button 
-                      className="reanalyze-btn" 
-                      onClick={analyzeEvent}
-                      disabled={isAlreadyAnalyzed}
-                      title={isAlreadyAnalyzed ? "This event has already been analyzed" : "Re-analyze this event"}
-                    >
-                      🔄 Analyze Again
-                    </button>
-                  )}
-                </div>
-              </div>
             </div>
           )}
         </div>
+
+        {/* Action buttons - outside scrollable area */}
+        {analysis && (
+          <div className="analysis-actions">
+            <div className="action-buttons">
+              {/* Show Uber booking button for events that need transportation */}
+              {needsTransportation() && (
+                <button
+                  className="uber-booking-btn"
+                  onClick={() => setShowUberModal(true)}
+                  title="Book an Uber ride for this event"
+                >
+                  🚕 Book Uber Ride
+                </button>
+              )}
+              <button
+                className="add-tasks-btn"
+                onClick={addSelectedTasksToCalendar}
+                disabled={selectedTasks.length === 0 || addingTasks}
+                title="Add selected tasks to your calendar"
+              >
+                {addingTasks ? '⏳ Adding...' : '📅 Add to Calendar'}
+              </button>
+              {!isChecklistEvent && !isGeneratedEvent && (
+                <button
+                  className="reanalyze-btn"
+                  onClick={analyzeEvent}
+                  disabled={isAlreadyAnalyzed}
+                  title={isAlreadyAnalyzed ? "This event has already been analyzed" : "Re-analyze this event"}
+                >
+                  🔄 Re-analyze
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {showUberModal && (
           <UberBookingModal
             event={event}
