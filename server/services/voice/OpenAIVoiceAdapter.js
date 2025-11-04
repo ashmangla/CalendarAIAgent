@@ -24,10 +24,18 @@ class OpenAIVoiceAdapter extends VoiceAdapter {
       const messages = [
         {
           role: "system",
-          content: `You are a calendar assistant that understands voice commands. Your job is to determine if the user wants to ADD or DELETE a calendar event, ADD TO WISHLIST (things they want to do someday), and extract all necessary details.
+          content: `You are a calendar assistant that understands voice commands. Your job is to determine if the user wants to ADD or DELETE a calendar event, ADD TO WISHLIST, UPDATE WISHLIST ITEM, DELETE WISHLIST ITEM, and extract all necessary details.
 
 IMPORTANT RULES:
-1. Determine intent: "add_event", "delete_event", "add_to_wishlist", or "needs_clarification"
+1. Determine intent: "add_event", "delete_event", "add_to_wishlist", "update_wishlist", "delete_wishlist", or "needs_clarification"
+2. Use "update_wishlist" when user wants to modify an existing wishlist item:
+   - "Change the museum item to modern art museum"
+   - "Update the restaurant location to downtown"
+   - "Modify the wishlist item about visiting Paris"
+3. Use "delete_wishlist" when user wants to remove a wishlist item:
+   - "Remove the museum from my wishlist"
+   - "Delete the restaurant item"
+   - "Cancel the Paris visit from wishlist"
 2. Use "add_to_wishlist" when user says things like:
    - "I want to...", "I'd like to...", "Someday I want to...", "I wish I could...", "I'm interested in..."
    - "I want to visit the museum someday"
@@ -40,13 +48,21 @@ IMPORTANT RULES:
 
 Return a JSON object with this exact structure:
 {
-  "intent": "add_event|delete_event|add_to_wishlist|needs_clarification",
+  "intent": "add_event|delete_event|add_to_wishlist|update_wishlist|delete_wishlist|needs_clarification",
   "eventDetails": {
     "title": "Event title (or null if unknown)",
     "date": "YYYY-MM-DD format (or null if unknown)",
     "time": "HH:MM in 24-hour format (or null if unknown)",
     "duration": "duration in minutes (default: 60)",
-    "location": "location if mentioned (or null)"
+    "location": "location if mentioned (or null)",
+    "description": "description if mentioned (or null)"
+  },
+  "wishlistItemId": "ID of the best matching wishlist item (if you can confidently identify it from the list above, otherwise null)",
+  "wishlistItemMatch": "Partial title or description to match wishlist item (only use as fallback if you can't identify the exact ID, otherwise null)",
+  "updates": {
+    "title": "New title if updating (or null)",
+    "location": "New location if updating (or null)",
+    "description": "New description if updating (or null)"
   },
   "followUpQuestion": "Specific question to ask user if needs_clarification (null otherwise)",
   "missingInfo": ["date", "time", "title"],
@@ -56,11 +72,19 @@ Return a JSON object with this exact structure:
 
 Current date: ${currentDate}
 Follow-up question count: ${followUpCount}/${maxFollowUps}
+${context.existingWishlistItems && context.existingWishlistItems.length > 0 ? `\nCurrent wishlist items (for UPDATE/DELETE operations, match the user's description to one of these and return its ID):\n${context.existingWishlistItems.map((item, idx) => `${idx + 1}. ID: "${item.id}" | Title: "${item.title}"${item.location ? ` | Location: ${item.location}` : ''}${item.description ? ` | Description: ${item.description}` : ''}`).join('\n')}` : ''}
 
 Guidelines:
 - Convert relative dates (tomorrow, next week, etc.) to specific dates in YYYY-MM-DD format
 - Convert natural time (2pm, 10:30am) to 24-hour format (HH:MM)
 - For DELETE intent: must identify which event (by title, date, time, or combination)
+- For UPDATE/DELETE wishlist: 
+  * IMPORTANT: Look at the wishlist items above and find the BEST matching item based on the user's description
+  * Use semantic matching (e.g., "museum" matches "art museum", "restaurant" matches "Italian restaurant", "Paris" matches "Trip to Paris")
+  * If you can confidently identify the item, set "wishlistItemId" to the exact ID from the list above
+  * Only use "wishlistItemMatch" as a fallback if you're uncertain which item matches (low confidence)
+  * Set confidence based on how certain you are (0.9+ = very confident, 0.6-0.9 = somewhat confident, <0.6 = uncertain)
+  * If multiple items could match and you're unsure, set "needs_clarification" and ask which one
 - If user says something unclear, set intent to "needs_clarification" and ask ONE specific question
 - Be confident in your parsing - only use "needs_clarification" if truly unclear`
         }
@@ -104,6 +128,9 @@ Guidelines:
           return {
             intent: 'needs_clarification',
             eventDetails: parsed.eventDetails || {},
+            wishlistItemId: parsed.wishlistItemId || null,
+            wishlistItemMatch: parsed.wishlistItemMatch || null,
+            updates: parsed.updates || null,
             followUpQuestion: parsed.followUpQuestion || 'Could you provide more details?',
             missingInfo: parsed.missingInfo || [],
             confidence: parsed.confidence || 0.5,
@@ -130,10 +157,13 @@ Guidelines:
           };
         }
 
-        // Valid intent (add_event or delete_event)
+        // Valid intent (add_event, delete_event, add_to_wishlist, update_wishlist, delete_wishlist)
         return {
           intent: parsed.intent,
           eventDetails: parsed.eventDetails || {},
+          wishlistItemId: parsed.wishlistItemId || null,
+          wishlistItemMatch: parsed.wishlistItemMatch || null,
+          updates: parsed.updates || null,
           followUpQuestion: null,
           missingInfo: [],
           confidence: parsed.confidence || 0.8,
@@ -293,6 +323,10 @@ Include:
         return `Added "${responseData.itemTitle}" to your wishlist. It's scheduled for the time you specified, and I'll suggest it if that time frees up!`;
       }
       return `Added "${responseData.itemTitle}" to your wishlist! I'll suggest it when you have free time.`;
+    } else if (responseData.type === 'wishlist_updated') {
+      return `Updated "${responseData.itemTitle}" in your wishlist.`;
+    } else if (responseData.type === 'wishlist_deleted') {
+      return `Removed "${responseData.itemTitle}" from your wishlist.`;
     }
     return 'Got it!';
   }

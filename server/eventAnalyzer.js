@@ -1,5 +1,6 @@
 const { OpenAI } = require('openai');
 const weatherService = require('./services/weatherService');
+const documentProcessor = require('./services/documentProcessor');
 
 class CalendarEventAnalyzer {
   constructor() {
@@ -12,7 +13,7 @@ class CalendarEventAnalyzer {
     });
   }
 
-  async analyzeEvent(event) {
+  async analyzeEvent(event, tokens = null) {
     // Fetch weather data if location is provided
     let weatherData = null;
     let weatherSuggestions = [];
@@ -30,6 +31,20 @@ class CalendarEventAnalyzer {
         }
       } catch (error) {
         console.warn('Could not fetch weather data:', error.message);
+      }
+    }
+
+    // Process Google Docs URLs from description (Phase 1)
+    let documentContext = null;
+    if (event.description && tokens) {
+      try {
+        const docResult = await documentProcessor.processDocuments(event.description, tokens);
+        if (docResult && docResult.hasDocuments) {
+          documentContext = docResult;
+          console.log(`📄 Processed ${docResult.documents.length} document(s) for event analysis`);
+        }
+      } catch (error) {
+        console.warn('Could not process documents:', error.message);
       }
     }
     try {
@@ -93,6 +108,20 @@ class CalendarEventAnalyzer {
             ${event.endDate ? `End Date: ${event.endDate}` : ''}
             ${event.location ? `Location: ${event.location}` : ''}
             ${event.description ? `Description: ${event.description}` : ''}
+            ${documentContext && documentContext.hasDocuments ? `
+            DOCUMENT CONTEXT:
+            The following documents are attached to this meeting:
+            ${documentContext.documents.map((doc, idx) => `
+            Document ${idx + 1}: "${doc.title}"
+            ${doc.wasSummarized ? '(Summarized for context)' : ''}
+            Content:
+            ${doc.text}
+            `).join('\n')}
+            
+            IMPORTANT: Use the document content above to generate specific, relevant preparation tasks. 
+            Extract key points, questions to ask, action items, and talking points from the documents.
+            Make your suggestions specific to what's mentioned in the documents, not generic.
+            ` : ''}
             ${weatherData ? `
             WEATHER FORECAST:
             - Location: ${weatherData.location}

@@ -1162,6 +1162,41 @@
   background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
 }
 
+/* Global Voice Assistant Container - Fixed position for all tabs */
+.global-voice-assistant-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  max-width: 450px;
+  max-height: 600px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  background-color: white;
+  overflow: hidden;
+  animation: slideInUp 0.3s ease-out;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .global-voice-assistant-container {
+    bottom: 10px;
+    right: 10px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+  }
+}
+
 /* Enhanced color coding for event type badges based on priority */
 .event-card.color-doctor .event-type {
   background: linear-gradient(135deg, #FF6B35 0%, #FF4500 100%);

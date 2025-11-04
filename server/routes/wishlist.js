@@ -79,6 +79,44 @@ router.post('/items', async (req, res) => {
 });
 
 /**
+ * Update wishlist item
+ */
+router.put('/items/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, location, date, time, priority } = req.body;
+
+    const updated = wishlistStore.updateItem(id, {
+      title,
+      description,
+      location,
+      date,
+      time,
+      priority
+    });
+
+    if (updated) {
+      res.json({
+        success: true,
+        item: updated,
+        message: 'Wishlist item updated'
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: 'Wishlist item not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating wishlist item:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update wishlist item'
+    });
+  }
+});
+
+/**
  * Delete wishlist item
  */
 router.delete('/items/:id', (req, res) => {

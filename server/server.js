@@ -359,8 +359,11 @@ app.post('/api/analyze-event', async (req, res) => {
         });
       }
 
-      // Analyze the event using our AI agent
-      analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze);
+      // Get Google OAuth tokens for document processing (if available)
+      const tokens = req.session?.tokens || null;
+      
+      // Analyze the event using our AI agent (pass tokens for Google Docs processing)
+      analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze, tokens);
       fromCache = false;
     }
 

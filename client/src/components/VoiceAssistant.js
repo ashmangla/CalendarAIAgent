@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import './VoiceAssistant.css';
 
-const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
+const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishlistItems = [], onClose }) => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
@@ -224,10 +224,14 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
           await handleDeleteEvent(eventDetails);
         } else if (intent === 'add_to_wishlist') {
           await handleAddToWishlist(eventDetails);
+        } else if (intent === 'update_wishlist') {
+          await handleUpdateWishlist(intentResponse.data);
+        } else if (intent === 'delete_wishlist') {
+          await handleDeleteWishlist(intentResponse.data);
         } else {
           const responseText = await generateResponse({
             type: 'info',
-            message: `I understand you want to ${intent.replace('_', ' ')}, but I can currently help with adding or deleting events, or adding to wishlist.`
+            message: `I understand you want to ${intent.replace('_', ' ')}, but I can currently help with adding or deleting events, or managing wishlist items.`
           });
           setResponse(responseText);
           speak(responseText);
@@ -309,6 +313,73 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     } catch (error) {
       console.error('Error adding to wishlist:', error);
       const errorMessage = error.response?.data?.error || 'Sorry, I couldn\'t add that to your wishlist. Please try again.';
+      setResponse(errorMessage);
+      speak(errorMessage);
+      setStatus('idle');
+    }
+  };
+
+  const handleUpdateWishlist = async (intentData) => {
+    try {
+      const { wishlistItemMatch, wishlistItemId, updates, eventDetails } = intentData;
+      
+      const response = await axios.post('/api/voice/update-wishlist', {
+        wishlistItemId,
+        wishlistItemMatch,
+        updates: updates || {
+          title: eventDetails?.title,
+          location: eventDetails?.location,
+          description: eventDetails?.description
+        }
+      });
+
+      if (response.data.success) {
+        const successMsg = response.data.response || `Updated wishlist item "${response.data.item?.title}" successfully.`;
+        setResponse(successMsg);
+        speak(successMsg);
+        setStatus('idle');
+        
+        // Notify parent if callback exists (for refresh)
+        if (onEventAdded) {
+          onEventAdded(null); // Signal refresh
+        }
+      } else {
+        throw new Error(response.data.error || 'Failed to update wishlist item');
+      }
+    } catch (error) {
+      console.error('Error updating wishlist:', error);
+      const errorMessage = error.response?.data?.error || 'Sorry, I couldn\'t find that wishlist item to update. Please try again.';
+      setResponse(errorMessage);
+      speak(errorMessage);
+      setStatus('idle');
+    }
+  };
+
+  const handleDeleteWishlist = async (intentData) => {
+    try {
+      const { wishlistItemMatch, wishlistItemId } = intentData;
+      
+      const response = await axios.post('/api/voice/delete-wishlist', {
+        wishlistItemId,
+        wishlistItemMatch
+      });
+
+      if (response.data.success) {
+        const successMsg = response.data.response || `Removed "${response.data.item?.title}" from your wishlist.`;
+        setResponse(successMsg);
+        speak(successMsg);
+        setStatus('idle');
+        
+        // Notify parent if callback exists (for refresh)
+        if (onEventAdded) {
+          onEventAdded(null); // Signal refresh
+        }
+      } else {
+        throw new Error(response.data.error || 'Failed to delete wishlist item');
+      }
+    } catch (error) {
+      console.error('Error deleting wishlist item:', error);
+      const errorMessage = error.response?.data?.error || 'Sorry, I couldn\'t find that wishlist item to delete. Please try again.';
       setResponse(errorMessage);
       speak(errorMessage);
       setStatus('idle');
@@ -480,16 +551,36 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
     <div className="voice-assistant">
       <div className="voice-assistant-header">
         <h3>🎤 Voice Assistant</h3>
-        <div className="voice-status">
-          <span className={`status-indicator ${status}`}></span>
-          <span className="status-text">
-            {status === 'idle' && 'Ready'}
-            {status === 'listening' && 'Listening...'}
-            {status === 'processing' && 'Processing...'}
-            {status === 'speaking' && 'Speaking...'}
-          </span>
-          {isInFollowUpLoop && (
-            <span className="follow-up-indicator">(Question {followUpCount}/5)</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="voice-status">
+            <span className={`status-indicator ${status}`}></span>
+            <span className="status-text">
+              {status === 'idle' && 'Ready'}
+              {status === 'listening' && 'Listening...'}
+              {status === 'processing' && 'Processing...'}
+              {status === 'speaking' && 'Speaking...'}
+            </span>
+            {isInFollowUpLoop && (
+              <span className="follow-up-indicator">(Question {followUpCount}/5)</span>
+            )}
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="voice-close-btn"
+              title="Close Voice Assistant"
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '1.5rem',
+                cursor: 'pointer',
+                padding: '0.25rem 0.5rem',
+                color: '#6b7280',
+                lineHeight: 1
+              }}
+            >
+              ×
+            </button>
           )}
         </div>
       </div>
@@ -506,8 +597,8 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents }) => {
 
       {transcript && (
         <div className="voice-transcript">
-          <strong>You said:</strong>
-          <p>{transcript}</p>
+          <strong>🎤 You said:</strong>
+          <p className="transcript-text">{transcript}</p>
         </div>
       )}
 

@@ -17,6 +17,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [isGeneratedEvent, setIsGeneratedEvent] = useState(false);
   const [fromCache, setFromCache] = useState(false);
   const [metadata, setMetadata] = useState(null);
+  const [showDescriptionEditor, setShowDescriptionEditor] = useState(false);
+  const [editedDescription, setEditedDescription] = useState('');
+  const [detectedDocUrls, setDetectedDocUrls] = useState([]);
   
   // Check if event type suggests transportation might be needed
   const needsTransportation = () => {
@@ -41,8 +44,14 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     setError(null);
     
     try {
+      // Use edited description if available, otherwise use original
+      const eventToAnalyze = {
+        ...event,
+        description: editedDescription || event.description || ''
+      };
+      
       const response = await axios.post('/api/analyze-event', {
-        event: event // Pass the full event object
+        event: eventToAnalyze // Pass the event with potentially updated description
       });
       
       if (response.data.success) {
@@ -81,7 +90,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     } finally {
       setLoading(false);
     }
-  }, [event]);
+  }, [event, editedDescription]);
 
   // Check event status on mount
   useEffect(() => {
@@ -370,6 +379,103 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               </span>
             </p>
             {event.location && <p className="event-location">📍 {event.location}</p>}
+            
+            {/* Description Section with Google Docs URL Detection */}
+            <div className="event-description-section">
+              <div className="description-header">
+                <strong>Description:</strong>
+                {!isChecklistEvent && !isGeneratedEvent && (
+                  <button
+                    className="edit-description-btn"
+                    onClick={() => setShowDescriptionEditor(!showDescriptionEditor)}
+                    title="Edit description"
+                  >
+                    {showDescriptionEditor ? '✗ Cancel' : '✏️ Edit'}
+                  </button>
+                )}
+              </div>
+              {showDescriptionEditor ? (
+                <div className="description-editor">
+                  <textarea
+                    className="description-textarea"
+                    value={editedDescription}
+                    onChange={(e) => {
+                      setEditedDescription(e.target.value);
+                      // Auto-detect URLs in real-time
+                      const urlPattern = /https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/g;
+                      const urls = [];
+                      let match;
+                      while ((match = urlPattern.exec(e.target.value)) !== null) {
+                        urls.push({
+                          fullUrl: match[0],
+                          docId: match[1]
+                        });
+                      }
+                      setDetectedDocUrls(urls);
+                    }}
+                    placeholder="Enter event description. Paste Google Docs/Sheets URLs here for AI-powered meeting preparation."
+                    rows="4"
+                  />
+                  <div className="description-hints">
+                    <p>💡 <strong>Tip:</strong> Paste Google Docs URLs (e.g., https://docs.google.com/document/d/...) in the description for enhanced meeting preparation</p>
+                  </div>
+                  {detectedDocUrls.length > 0 && (
+                    <div className="detected-docs">
+                      <strong>📄 Detected Google Docs ({detectedDocUrls.length}):</strong>
+                      {detectedDocUrls.map((url, idx) => (
+                        <a key={idx} href={url.fullUrl} target="_blank" rel="noopener noreferrer" className="doc-url-link">
+                          📄 Document {idx + 1}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    className="save-description-btn"
+                    onClick={async () => {
+                      // Detect URLs in the edited description
+                      const urlPattern = /https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/g;
+                      const urls = [];
+                      let match;
+                      while ((match = urlPattern.exec(editedDescription)) !== null) {
+                        urls.push({
+                          fullUrl: match[0],
+                          docId: match[1]
+                        });
+                      }
+                      setDetectedDocUrls(urls);
+                      
+                      // Close editor - description will be used when analyzing
+                      setShowDescriptionEditor(false);
+                      
+                      // Note: For Google Calendar events, description updates would require API call
+                      // For now, the edited description will be used in analysis
+                    }}
+                  >
+                    💾 Save Description
+                  </button>
+                </div>
+              ) : (
+                <div className="event-description-display">
+                  {event.description ? (
+                    <>
+                      <p className="description-text">{event.description}</p>
+                      {detectedDocUrls.length > 0 && (
+                        <div className="detected-docs-inline">
+                          <strong>📄 Google Docs detected:</strong>
+                          {detectedDocUrls.map((url, idx) => (
+                            <a key={idx} href={url.fullUrl} target="_blank" rel="noopener noreferrer" className="doc-url-link">
+                              Document {idx + 1}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="no-description">No description yet. Click "Edit" to add one.</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {!analysis && !loading && !error && (

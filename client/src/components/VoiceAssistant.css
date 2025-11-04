@@ -136,12 +136,26 @@
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 1rem;
-  border-left: 3px solid #667eea;
+  border-left: 4px solid #3b82f6;
 }
 
 .voice-transcript strong {
   color: #1e293b;
   font-size: 0.875rem;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.voice-transcript .transcript-text {
+  margin: 0;
+  color: #1e293b;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  font-style: italic;
+  padding: 0.5rem;
+  background: white;
+  border-radius: 4px;
 }
 
 .voice-transcript p {
