@@ -175,7 +175,7 @@ function App() {
             className={`nav-btn ${activeTab === 'calendar' ? 'active' : ''}`}
             onClick={() => setActiveTab('calendar')}
           >
-            Analyze Events
+            Generate Event Milestones
           </button>
           <button
             className={`nav-btn ${activeTab === 'wishlist' ? 'active' : ''}`}
