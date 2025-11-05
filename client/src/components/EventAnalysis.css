@@ -900,6 +900,55 @@
   opacity: 0.7;
 }
 
+.reanalyze-btn {
+  background: transparent;
+  color: #8B5CF6;
+  border: 1px solid #8B5CF6;
+  padding: 0.4rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.75rem;
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  letter-spacing: -0.025em;
+  flex: 1;
+  max-width: 150px;
+}
+
+.reanalyze-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
+  color: white;
+  border-color: transparent;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.4);
+}
+
+.reanalyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+  color: #94a3b8;
+  border-color: #cbd5e1;
+}
+
+.add-tasks-btn,
+.reanalyze-btn {
+  padding: 0.5rem 1rem;
+  min-width: 180px;
+  max-width: 180px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+}
+
 .timeline-section {
   margin-bottom: 1rem;
 }
@@ -988,42 +1037,6 @@
   gap: 0.5rem;
   justify-content: center;
   align-items: center;
-}
-
-.reanalyze-btn {
-  background: transparent;
-  color: #8B5CF6;
-  border: 1px solid #8B5CF6;
-  padding: 0.4rem 0.75rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 0.75rem;
-  font-family: inherit;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  letter-spacing: -0.025em;
-  flex: 1;
-  max-width: 150px;
-}
-
-.reanalyze-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #F97316 100%);
-  color: white;
-  border-color: transparent;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.4);
-}
-
-.reanalyze-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: transparent;
-  color: #94a3b8;
-  border-color: #cbd5e1;
 }
 
 @media (max-width: 768px) {

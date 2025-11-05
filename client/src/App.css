@@ -276,12 +276,13 @@
   padding: 1.5rem;
   box-shadow: 0 4px 6px rgba(30, 58, 138, 0.1);
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .event-details-placeholder {
@@ -410,6 +411,11 @@
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
+}
+
+.calendar-day-selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
 .calendar-day-empty {

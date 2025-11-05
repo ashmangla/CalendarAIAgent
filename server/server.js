@@ -4,7 +4,6 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const CalendarEventAnalyzer = require('./eventAnalyzer');
-const analysisCache = require('./services/analysisCache');
 const eventsStore = require('./services/eventsStore');
 const weatherService = require('./services/weatherService');
 const uberRoutes = require('./routes/uber');
@@ -321,67 +320,38 @@ app.post('/api/analyze-event', async (req, res) => {
       });
     }
 
-    // Generate a unique cache key from event
-    // Include id, title, date, and time to ensure uniqueness
+    // Check if event has already been analyzed (from metadata)
     const eventIdentifier = eventToAnalyze.id || eventToAnalyze.eventId;
-    const eventTime = eventToAnalyze.time || (eventToAnalyze.date && eventToAnalyze.date.includes('T') ? new Date(eventToAnalyze.date).toTimeString().slice(0, 8) : '');
-    const eventDate = eventToAnalyze.date ? (typeof eventToAnalyze.date === 'string' && eventToAnalyze.date.includes('T') 
-      ? new Date(eventToAnalyze.date).toISOString().split('T')[0] 
-      : eventToAnalyze.date) : 'no-date';
+    const isAlreadyAnalyzed = eventToAnalyze.isAnalyzed || eventToAnalyze.extendedProperties?.private?.isAnalyzed === 'true';
     
-    // Create a more unique cache key
-    const cacheKey = eventIdentifier || `${eventToAnalyze.title}_${eventDate}_${eventTime}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (isAlreadyAnalyzed) {
+      return res.status(400).json({
+        success: false,
+        message: 'This event has already been analyzed'
+      });
+    }
 
-    // Check metadata to see if event has been analyzed
-    const isAnalyzedInCache = analysisCache.isAnalyzed(cacheKey);
+    // Check if event analyzer is available
+    if (!eventAnalyzer) {
+      return res.status(503).json({
+        success: false,
+        message: 'AI Event Analysis is not available. Please set OPENAI_API_KEY environment variable.'
+      });
+    }
+
+    let analysis;
+
+    // Get Google OAuth tokens for document processing (if available)
+    const tokens = req.session?.tokens || null;
     
-    // Attempt to load cached analysis
-    let analysis = analysisCache.get(cacheKey);
-    let fromCache = false;
-    
-    if (analysis) {
-      fromCache = true;
-      if (isAnalyzedInCache) {
-        console.log(`Cached analysis found for event: ${cacheKey}`);
-      } else {
-        console.log(`Cached analysis exists without metadata for event: ${cacheKey}`);
-      }
-    } else if (isAnalyzedInCache) {
-      console.log(`Cached metadata found but analysis expired, re-analyzing event: ${cacheKey}`);
-    }
+    // Analyze the event using our AI agent (pass tokens for Google Docs processing)
+    analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze, tokens);
 
-    if (!analysis) {
-      // Check if event analyzer is available
-      if (!eventAnalyzer) {
-        return res.status(503).json({
-          success: false,
-          message: 'AI Event Analysis is not available. Please set OPENAI_API_KEY environment variable.'
-        });
-      }
-
-      // Get Google OAuth tokens for document processing (if available)
-      const tokens = req.session?.tokens || null;
-      
-      // Analyze the event using our AI agent (pass tokens for Google Docs processing)
-      analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze, tokens);
-      fromCache = false;
-    }
-
-    // Refresh weather data when needed (handles cached analyses as well)
-    const weatherUpdated = await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
-    if (fromCache && weatherUpdated) {
-      console.log(`Weather data refreshed for cached analysis: ${cacheKey}`);
-    }
-
-    // Store or refresh cache when analysis is new or weather info changed
-    const shouldRefreshCache = !fromCache || weatherUpdated || !isAnalyzedInCache;
-    if (shouldRefreshCache && eventToAnalyze.date) {
-      analysisCache.set(cacheKey, analysis, eventToAnalyze.date);
-    }
+    // Refresh weather data when needed
+    await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
     
     // Don't mark the event as analyzed yet - wait until tasks are added
     // If this event is in Google Calendar, remove the isAnalyzed flag
-    const tokens = req.session?.tokens;
     if (tokens && tokens.access_token && eventIdentifier && eventToAnalyze.source === 'google') {
       try {
         const { google } = require('googleapis');
@@ -406,16 +376,11 @@ app.post('/api/analyze-event', async (req, res) => {
       }
     }
 
-    // Get metadata for the event
-    const metadata = analysisCache.getMetadata(cacheKey);
-
     res.json({
       success: true,
       event: { ...eventToAnalyze, isAnalyzed: false }, // Return as not analyzed until tasks are added
       analysis: analysis,
-      fromCache: fromCache,
-      metadata: metadata || { isAnalyzed: false, analyzedAt: new Date() },
-      message: fromCache ? 'Analysis retrieved from cache' : 'Event analyzed successfully'
+      message: 'Event analyzed successfully'
     });
   } catch (error) {
     console.error('Error analyzing event:', error);
@@ -519,15 +484,21 @@ app.get('/api/event-status/:eventId', (req, res) => {
       });
     }
 
-    const metadata = analysisCache.getMetadata(eventId);
-    const hasAnalysis = analysisCache.has(eventId);
+    // Check if event is analyzed from event data or Google Calendar metadata
+    let eventToCheck;
+    if (req.body.event) {
+      eventToCheck = req.body.event;
+    } else {
+      eventToCheck = mockCalendarEvents.find(e => e.id === eventId);
+    }
+    
+    const isAnalyzed = eventToCheck?.isAnalyzed || 
+                       eventToCheck?.extendedProperties?.private?.isAnalyzed === 'true';
     
     res.json({
       success: true,
       eventId: eventId,
-      isAnalyzed: !!metadata,
-      hasCachedAnalysis: hasAnalysis,
-      metadata: metadata
+      isAnalyzed: isAnalyzed
     });
   } catch (error) {
     console.error('Error checking event status:', error);

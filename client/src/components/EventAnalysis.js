@@ -15,7 +15,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [isAlreadyAnalyzed, setIsAlreadyAnalyzed] = useState(false);
   const [isChecklistEvent, setIsChecklistEvent] = useState(false);
   const [isGeneratedEvent, setIsGeneratedEvent] = useState(false);
-  const [fromCache, setFromCache] = useState(false);
   const [showDescriptionEditor, setShowDescriptionEditor] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
   const [detectedDocUrls, setDetectedDocUrls] = useState([]);
@@ -45,10 +44,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       
       if (response.data.success) {
         setAnalysis(response.data.analysis);
-        // Don't mark as analyzed yet - only after tasks are added
-        // setIsAlreadyAnalyzed(true); // REMOVED - now set only when tasks are added
-        const wasFromCache = response.data.fromCache || false;
-        setFromCache(wasFromCache);
 
         // Don't notify parent that event was analyzed yet
         // Only notify after tasks are actually added to the calendar
@@ -471,8 +466,12 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               ) : (
                 <>
                   <p>Get AI-powered suggestions for preparing for this event!</p>
-                  <button className="analyze-btn" onClick={analyzeEvent}>
-                    🧠 Analyze Event
+                  <button
+                    className="analyze-btn"
+                    onClick={analyzeEvent}
+                    disabled={loading}
+                  >
+                    {loading ? 'Analyzing...' : '🧠 Generate Checklist'}
                   </button>
                 </>
               )}
@@ -500,12 +499,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               <div className="analysis-summary">
                 <div className="summary-header">
                   <h5>📋 Event Summary</h5>
-                  {fromCache && (
-                    <span className="cache-badge" title="This analysis was loaded from cache">
-                      📦 Cached
-                    </span>
-                  )}
-                  {isAlreadyAnalyzed && !fromCache && (
+                  {isAlreadyAnalyzed && (
                     <span className="analyzed-badge" title="This event has been analyzed">
                       ✅ Analyzed
                     </span>
@@ -756,16 +750,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
         {analysis && (
           <div className="analysis-actions">
             <div className="action-buttons">
-              {/* Show Uber booking button for events that need transportation */}
-              {needsTransportation() && (
-                <button
-                  className="uber-booking-btn"
-                  onClick={() => setShowUberModal(true)}
-                  title="Book an Uber ride for this event"
-                >
-                  🚕 Book Uber Ride
-                </button>
-              )}
               <button
                 className="add-tasks-btn"
                 onClick={addSelectedTasksToCalendar}
@@ -779,9 +763,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                   className="reanalyze-btn"
                   onClick={analyzeEvent}
                   disabled={isAlreadyAnalyzed}
-                  title={isAlreadyAnalyzed ? "This event has already been analyzed" : "Re-analyze this event"}
+                  title={isAlreadyAnalyzed ? "This event has already been analyzed" : "Re-generate the checklist"}
                 >
-                  🔄 Re-analyze
+                  🔄 Re-generate checklist
                 </button>
               )}
             </div>

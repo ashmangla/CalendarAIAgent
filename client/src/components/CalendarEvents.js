@@ -9,6 +9,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [selectedEventId, setSelectedEventId] = useState(null);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [userInfo, setUserInfo] = useState(null);
@@ -594,6 +595,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     // For AI-generated or already analyzed events, show event details instead
     if (event.isAIGenerated || event.isAnalyzed) {
       setSelectedEvent(event);
+      setSelectedEventId(getEventIdentifier(event));
       setShowAnalysis(true);
       return;
     }
@@ -601,6 +603,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     // Only allow analyzing future or today's events
     if (!isPastEvent(event)) {
       setSelectedEvent(event);
+      setSelectedEventId(getEventIdentifier(event));
       setShowAnalysis(true);
     }
   };
@@ -608,6 +611,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   const closeAnalysis = () => {
     setShowAnalysis(false);
     setSelectedEvent(null);
+    setSelectedEventId(null);
   };
 
   const handleEventAnalyzed = useCallback((eventId) => {
@@ -620,12 +624,18 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
         return event;
       })
     );
-    
-    // Also update selectedEvent if it's the one that was analyzed
-    if (selectedEvent && (selectedEvent.id || selectedEvent.eventId) === eventId) {
-      setSelectedEvent(prev => prev ? { ...prev, isAnalyzed: true } : null);
-    }
-  }, [selectedEvent]);
+
+    // Update selected event state if it's the same event
+    setSelectedEvent(prevSelected => {
+      if (!prevSelected) return prevSelected;
+      const selectedId = getEventIdentifier(prevSelected);
+      if (selectedId === eventId) {
+        return { ...prevSelected, isAnalyzed: true };
+      }
+      return prevSelected;
+    });
+    setSelectedEventId(prevId => (prevId === eventId ? eventId : prevId));
+  }, []);
 
   const handleDeleteEvent = async (event, e) => {
     e.stopPropagation(); // Prevent event card click
@@ -648,9 +658,10 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
         );
         
         // Close analysis panel if this event was selected
-        if (selectedEvent && (selectedEvent.id || selectedEvent.eventId) === eventId) {
-          setShowAnalysis(false);
+        if (selectedEventId && selectedEventId === getEventIdentifier(event)) {
           setSelectedEvent(null);
+          setSelectedEventId(null);
+          setShowAnalysis(false);
         }
 
         // Show success message
@@ -682,6 +693,39 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     // Refresh the events list to show the new AI-generated tasks
     fetchEvents();
   };
+
+  const getEventIdentifier = (event) => {
+    if (!event) return null;
+    return (
+      event.id ||
+      event.eventId ||
+      event.originalEventId ||
+      event.taskId ||
+      `${event.title || 'event'}_${event.date || ''}_${event.time || event.startTime || ''}`
+    );
+  };
+
+  const resolvedSelectedEvent = React.useMemo(() => {
+    if (!selectedEventId) return selectedEvent;
+    const match = events.find(e => getEventIdentifier(e) === selectedEventId);
+    return match || selectedEvent;
+  }, [selectedEventId, events, selectedEvent]);
+
+  const getEventDateKey = (event) => {
+    if (!event || !event.date) return null;
+    try {
+      const eventDate = new Date(event.date);
+      if (isNaN(eventDate.getTime())) {
+        return null;
+      }
+      return eventDate.toISOString().split('T')[0];
+    } catch (err) {
+      console.warn('Unable to parse event date for selection highlighting:', event, err);
+      return null;
+    }
+  };
+
+  const selectedEventDateKey = getEventDateKey(resolvedSelectedEvent);
 
   // Show authentication modal if user hasn't made a choice yet
   if (showAuthModal) {
@@ -750,7 +794,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
               </div>
             ) : (
               <div className="events-grid">
-                {displayEvents.map((event) => {
+                {displayEvents.map((event, index) => {
                   const canAnalyze = !event.isAIGenerated && !event.isAnalyzed && !isPastEvent(event);
                   const canClick = canAnalyze || event.isAIGenerated || event.isAnalyzed;
                   const getTitle = () => {
@@ -762,8 +806,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
                   return (
                   <div
-                    key={event.id}
-                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''}`}
+                    key={getEventIdentifier(event) || `${event.title}-${index}`}
+                    className={`event-card ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated' : ''} ${!canClick ? 'non-clickable' : ''} ${selectedEventId && selectedEventId === getEventIdentifier(event) ? 'selected' : ''}`}
                     onClick={() => canClick && handleAnalyzeEvent(event)}
                     title={getTitle()}
                     style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -889,16 +933,19 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
               <div className="calendar-weekday">Sat</div>
             </div>
             <div className="calendar-days">
-              {generateCalendarGrid().map((date, index) => (
+              {generateCalendarGrid().map((date, index) => {
+                const dateKey = date ? date.toISOString().split('T')[0] : null;
+                const isSelectedDay = selectedEventDateKey && dateKey === selectedEventDateKey;
+                return (
                 <div 
                   key={index} 
-                  className={`calendar-day ${!date ? 'calendar-day-empty' : ''} ${isToday(date) ? 'calendar-day-today' : ''}`}
+                  className={`calendar-day ${!date ? 'calendar-day-empty' : ''} ${isToday(date) ? 'calendar-day-today' : ''} ${isSelectedDay ? 'calendar-day-selected' : ''}`}
                 >
                   {date && (
                     <>
                       <div className="calendar-day-number">{date.getDate()}</div>
                       <div className="calendar-day-events">
-                        {getEventsForDate(date).map((event) => {
+                        {getEventsForDate(date).map((event, eventIndex) => {
                           const canAnalyze = !event.isAIGenerated && !event.isAnalyzed && !isPastEvent(event);
                           const canClick = canAnalyze || event.isAIGenerated || event.isAnalyzed;
                           const getTitle = () => {
@@ -910,8 +957,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
                           return (
                           <div
-                            key={event.id}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEvent?.id === event.id ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            key={getEventIdentifier(event) || `${event.title}-${eventIndex}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEventId && selectedEventId === getEventIdentifier(event) ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
                             onClick={() => canClick && handleAnalyzeEvent(event)}
                             title={getTitle()}
                             style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -943,21 +990,22 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                     </>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
 
-            {showAnalysis && selectedEvent && (
+            {showAnalysis && resolvedSelectedEvent && (
               <div className="event-details-panel">
-                {selectedEvent.isAIGenerated || selectedEvent.isAnalyzed ? (
+                {resolvedSelectedEvent.isAIGenerated || resolvedSelectedEvent.isAnalyzed ? (
                   <EventDetails
-                    event={selectedEvent}
+                    event={resolvedSelectedEvent}
                     onClose={closeAnalysis}
                   />
                 ) : (
                   <EventAnalysis
-                    event={selectedEvent}
+                    event={resolvedSelectedEvent}
                     onClose={closeAnalysis}
                     onTasksAdded={handleTasksAdded}
                     onEventAnalyzed={handleEventAnalyzed}
