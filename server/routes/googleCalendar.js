@@ -126,32 +126,26 @@ router.post('/events', async (req, res) => {
       orderBy: 'startTime'
     });
     
-    // Process events - keep at least one instance of recurring events
-    const recurringEventSeries = new Set();
+    // Process events - keep all instances of recurring events
     const events = (response.data.items || [])
       .filter(event => {
         // Keep non-recurring events
         if (!event.recurrence && !event.recurringEventId) {
           return true;
         }
-        
+
         // For recurring events with recurringEventId (instances of recurring events)
-        // Keep only the first instance of each series
+        // Keep ALL instances now instead of just the first one
         if (event.recurringEventId) {
-          if (recurringEventSeries.has(event.recurringEventId)) {
-            return false; // Skip duplicate instances
-          }
-          recurringEventSeries.add(event.recurringEventId);
-          return true; // Keep first instance
+          return true; // Keep all instances
         }
-        
+
         // For events with recurrence rules (parent recurring events)
-        // Keep these as they represent the recurring series
-        if (event.recurrence && !recurringEventSeries.has(event.id)) {
-          recurringEventSeries.add(event.id);
-          return true;
+        // Skip the parent since we're already showing individual instances
+        if (event.recurrence) {
+          return false; // Don't show parent recurring event, show instances instead
         }
-        
+
         return false;
       })
       .map(event => {
