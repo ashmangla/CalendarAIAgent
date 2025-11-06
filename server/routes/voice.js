@@ -4,6 +4,7 @@ const VoiceAdapterFactory = require('../services/voice/VoiceAdapterFactory');
 const calendarConflictService = require('../services/calendarConflictService');
 const eventsStore = require('../services/eventsStore');
 const wishlistStore = require('../services/wishlistStore');
+const { getTranscriptionService } = require('../services/voice/transcriptionService');
 
 // Initialize voice adapter
 let voiceAdapter;
@@ -61,6 +62,57 @@ router.post('/process', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to process voice input'
+    });
+  }
+});
+
+/**
+ * Transcribe raw audio (base64-encoded) using Whisper
+ */
+router.post('/transcribe', async (req, res) => {
+  try {
+    const { audio, mimeType, language = 'en', prompt = null } = req.body;
+
+    if (!audio || typeof audio !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Audio data is required for transcription'
+      });
+    }
+
+    const audioBuffer = Buffer.from(audio, 'base64');
+    if (!audioBuffer.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Received empty audio buffer'
+      });
+    }
+
+    const transcriptionService = getTranscriptionService();
+    if (!transcriptionService) {
+      return res.status(503).json({
+        success: false,
+        error: 'Transcription service is not configured. Set OPENAI_API_KEY to enable Whisper.'
+      });
+    }
+
+    const result = await transcriptionService.transcribeBuffer(audioBuffer, {
+      mimeType,
+      language,
+      prompt
+    });
+
+    res.json({
+      success: true,
+      transcript: result.text,
+      segments: result.segments,
+      confidence: result.confidence
+    });
+  } catch (error) {
+    console.error('Error transcribing audio input:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to transcribe audio'
     });
   }
 });
