@@ -1,6 +1,7 @@
 const { OpenAI } = require('openai');
 const weatherService = require('./services/weatherService');
 const documentProcessor = require('./services/documentProcessor');
+const mcpMealPlanningClient = require('./services/mcpMealPlanningClient');
 
 class CalendarEventAnalyzer {
   constructor() {
@@ -47,6 +48,11 @@ class CalendarEventAnalyzer {
         console.warn('Could not process documents:', error.message);
       }
     }
+
+    // Note: The agent (LLM) will decide when to use the meal planning MCP tool
+    // based on the event context. We don't pre-detect meal prep events here.
+    let mealPlanDocument = null;
+    let mealPlanInfo = null;
     try {
       const completion = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
@@ -77,6 +83,7 @@ class CalendarEventAnalyzer {
             }
 
             CONTEXT-SPECIFIC REQUIREMENTS:
+            - For MEAL PREP / DINNER PREP / LUNCH PREP / BREAKFAST PREP / WEEKLY MEAL events: You have access to a meal planning MCP tool that can generate personalized meal plans. When you detect such an event, you should ask the user for preferences (number of people, number of days, dietary restrictions, calorie targets) before generating the meal plan. The meal plan will be saved as a Google Doc with the event date in the filename.
             - For MUSIC CLASSES: Include instrument, music sheets, accessories, uniform, transportation
             - For TRAVEL (both local and global trips): MUST include transportation planning with Uber/ride booking option, packing lists, documents, accommodation details. For local trips, suggest Uber booking. For global trips, include airport transportation and Uber for local transit.
             - For MEETINGS: Include agenda, materials, technology, location details, and transportation (Uber booking option if location requires travel)
@@ -122,6 +129,18 @@ class CalendarEventAnalyzer {
             Extract key points, questions to ask, action items, and talking points from the documents.
             Make your suggestions specific to what's mentioned in the documents, not generic.
             ` : ''}
+            ${mealPlanDocument ? `
+            MEAL PLAN GENERATED:
+            A personalized meal plan has been automatically generated using the MCP meal planning tool and saved as a Google Doc.
+            - Document Title: ${mealPlanDocument.title}
+            - Document URL: ${mealPlanDocument.url}
+            - Total Meals: ${mealPlanInfo?.totalMeals || 'N/A'}
+            ${mealPlanInfo?.nutrients ? `
+            - Daily Nutrition: Calories: ${mealPlanInfo.nutrients.calories || 'N/A'}, Protein: ${mealPlanInfo.nutrients.protein || 'N/A'}g, Carbs: ${mealPlanInfo.nutrients.carbohydrates || 'N/A'}g
+            ` : ''}
+            
+            IMPORTANT: Include a preparation task that references this meal plan document. Suggest tasks like "Review meal plan document", "Shop for ingredients from meal plan", or "Prepare meals according to the plan".
+            ` : ''}
             ${weatherData ? `
             WEATHER FORECAST:
             - Location: ${weatherData.location}
@@ -165,6 +184,32 @@ class CalendarEventAnalyzer {
           fetchedAt: new Date().toISOString(),
           queryLocation: event.location
         };
+      }
+
+      // Add meal plan document if generated
+      if (mealPlanDocument) {
+        analysis.mealPlan = {
+          document: {
+            title: mealPlanDocument.title,
+            url: mealPlanDocument.url,
+            documentId: mealPlanDocument.documentId
+          },
+          message: 'A personalized meal plan has been generated and saved to Google Docs.'
+        };
+        
+        // Add a task to the checklist about the meal plan
+        if (analysis.preparationTasks && Array.isArray(analysis.preparationTasks)) {
+          analysis.preparationTasks.unshift({
+            id: 'meal_plan_doc',
+            task: 'Review Generated Meal Plan',
+            priority: 'High',
+            category: 'Meal Planning',
+            estimatedTime: '10 minutes',
+            suggestedDate: event.date,
+            description: `View meal plan document: ${mealPlanDocument.url}`,
+            isMealPlanTask: true
+          });
+        }
       }
 
       return analysis;

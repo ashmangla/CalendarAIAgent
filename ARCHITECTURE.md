@@ -4,6 +4,26 @@
 
 MotherBoard is an AI-powered calendar assistant that helps users prepare for events, manage their schedule, and organize wishlist items. The system integrates with Google Calendar and uses OpenAI's LLM for intelligent event analysis and voice command processing.
 
+## Tech Stack
+
+| Technology | Purpose | Rationale |
+| --- | --- | --- |
+| React + React DOM | Build the SPA UI and manage component state | Mature ecosystem, fast iteration, integrates well with existing team skills |
+| Custom CSS (modular styles) | Responsive layout, theming, calendar/event visuals | Full control over styling without pulling in heavy UI frameworks |
+| Axios | HTTP client for REST calls between client and server | Promise-based API, interceptors, consistent error handling |
+| Web Speech API | Browser-native speech recognition and synthesis | No extra dependency, works across modern browsers for real-time voice UX |
+| OpenAI GPT-3.5-turbo | Event checklist generation, voice intent parsing, wishlist matching, color classification fallback | Provides rich reasoning, language understanding, reduces need for custom NLP |
+| Node.js + Express | REST backend, routing, middleware, session handling | Lightweight server with huge community support and easy integration with JS stack |
+| Google Calendar API (`googleapis`) | OAuth2 auth, fetch/create/delete real calendar events | Native integration with users’ primary calendars, reliable source of truth |
+| Google Docs API (Drive readonly scope) | Fetch and summarize meeting docs referenced in events | Enables richer AI prep by grounding checklists in real materials |
+| In-memory stores (`eventsStore`, `wishlistStore`) | Temporary storage for events/wishlist while prototyping | Keeps data flow simple without database overhead for MVP |
+| Google Calendar extended properties | Persist `isAnalyzed` metadata on real events | Survives server restarts, avoids duplicate analysis for synced events |
+| Browser `localStorage` | Track daily Morning Review completion | Lightweight persistence for user-specific UI state |
+| `documentProcessor` service | Detect/summarize Google Docs URLs before LLM prompt | Compresses large docs to fit token limits and improves analysis quality |
+| `calendarConflictService` | Conflict detection and alternative slot suggestions | Encapsulates scheduling logic for reuse by voice assistant & UI |
+| npm scripts + concurrently + nodemon | Local development workflow, parallel client/server start | Speeds up feedback loop, hot reloads without manual restarts |
+| Voice Interface | MediaRecorder + Whisper (OpenAI) for STT, Web Speech API for TTS, custom `VoiceAssistant` | Accurate transcription across accents, browser-native playback, supports follow-up loop orchestration |
+
 ## High-Level Architecture
 
 ```
@@ -43,11 +63,11 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
 │  │              │  │   calendar   │  │                       │ │
 │  │ - Event      │  │ - Auth       │  │ - EventAnalyzer       │ │
 │  │   Analysis   │  │ - Sync       │  │ - WishlistAnalyzer    │ │
-│  │ - Caching    │  │              │  │ - VoiceAdapter       │ │
-│  └──────────────┘  └──────────────┘  │ - ConflictService    │ │
-│                                      │ - EventsStore        │ │
+│  │ - Document   │  │              │  │ - VoiceAdapter       │ │
+│  │   Context    │  │              │  │ - ConflictService    │ │
+│  └──────────────┘  └──────────────┘  │ - EventsStore        │ │
 │                                      │ - WishlistStore      │ │
-│                                      │ - AnalysisCache      │ │
+│                                      │ - DocumentProcessor  │ │
 │                                      └───────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -69,9 +89,9 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
 
 ```
 App.js (Root)
-├── Navigation (Home, Today's Events, Analyze Events, Wishlist)
+├── Navigation (Home, Today's Events, Generate Event Milestones, Wishlist)
 ├── CalendarEvents (Main calendar view)
-│   ├── EventAnalysis (AI analysis panel)
+│   ├── EventAnalysis (AI checklist panel)
 │   ├── EventDetails (Event details panel)
 │   ├── VoiceAssistant (Voice commands)
 │   └── GoogleAuth (Authentication)
@@ -97,7 +117,7 @@ server/
     │   └── VoiceAdapterFactory.js (Factory pattern)
     ├── eventsStore.js (In-memory event storage)
     ├── wishlistStore.js (Wishlist item storage)
-    ├── analysisCache.js (AI analysis caching)
+    ├── documentProcessor.js (Google Docs content + summarization)
     ├── calendarConflictService.js (Conflict detection)
     └── weatherService.js (Weather integration)
 ```
@@ -107,13 +127,13 @@ server/
 ### 1. Voice Command Flow
 
 ```
-User speaks → VoiceAssistant
+User speaks → VoiceAssistant (MediaRecorder)
     ↓
-Web Speech API (transcription)
+POST /api/voice/transcribe { audio }
     ↓
-POST /api/voice/process { transcript }
+Whisper (OpenAI) → transcript + confidence
     ↓
-VoiceAdapter.parseIntent() (LLM or Mock)
+POST /api/voice/process { transcript, context }
     ↓
 Intent: add_event | delete_event | add_to_wishlist
     ↓
@@ -130,25 +150,19 @@ Intent: add_event | delete_event | add_to_wishlist
 ### 2. Event Analysis Flow
 
 ```
-User clicks "Analyze Event"
+User clicks "Generate Checklist"
     ↓
 POST /api/analyze-event { event }
     ↓
-Check AnalysisCache (already analyzed?)
+Server checks metadata (event.isAnalyzed / Google extended properties)
     ↓
-┌──────────────┬─────────────────────┐
-│  Cached      │  Not Cached         │
-│  ↓           │  ↓                  │
-│ Return cache │ EventAnalyzer       │
-│              │   ↓                 │
-│              │ OpenAI API          │
-│              │   ↓                 │
-│              │ Parse response      │
-│              │   ↓                 │
-│              │ Cache result        │
-│              │   ↓                 │
-│              │ Return analysis     │
-└──────────────┴─────────────────────┘
+If already analyzed → return 400 (prevent duplicate runs)
+    ↓
+EventAnalyzer gathers context (description edits, Google Docs URLs, weather)
+    ↓
+OpenAI API generates tasks, checklists, timelines
+    ↓
+Response returned to client and metadata marked analyzed after tasks added
 ```
 
 ### 3. Wishlist Matching Flow
@@ -200,7 +214,8 @@ VoiceAdapter (Abstract)
 - **Purpose**: AI-powered event preparation analysis
 - **Model**: GPT-3.5-turbo
 - **Output**: Structured JSON with tasks, checklists, priorities
-- **Caching**: Results cached until event day ends
+- **Document Context**: Fetches/summarizes Google Docs linked in event descriptions
+- **Metadata**: Uses `isAnalyzed` flags (local + Google extended properties) to prevent duplicate analyses
 - **Features**:
   - Weather integration for outdoor events
   - Context-specific checklists (travel, music, etc.)
@@ -228,20 +243,22 @@ VoiceAdapter (Abstract)
 - Auto-cleanup of past-dated items
 - Supports scheduled (with date/time) and unscheduled items
 
-#### AnalysisCache
-- Caches AI analysis results
-- Expires at end of event day
-- Prevents re-analysis of same events
-- Tracks metadata (analyzedAt, expirationDate)
+#### Metadata Tracking
+- Analyzed status stored on events (React state) and via Google Calendar extended properties
+- Prevents re-analysis once checklist tasks have been scheduled
+- Cleared when events are deleted or refreshed
 
 ## API Endpoints
 
 ### Voice Routes (`/api/voice`)
 
+- `POST /transcribe` - Convert audio input to text via Whisper
 - `POST /process` - Parse voice transcript, return intent and event details
 - `POST /check-conflict` - Check for calendar conflicts, suggest alternatives
 - `POST /create-event` - Create calendar event (Google or local)
 - `POST /add-to-wishlist` - Add item to wishlist via voice
+- `POST /update-wishlist` - Update wishlist item details via voice
+- `POST /delete-wishlist` - Remove a wishlist item via voice
 - `POST /generate-response` - Generate voice response message
 
 ### Calendar Routes (`/api/calendar`)
@@ -331,11 +348,8 @@ VoiceAdapter (Abstract)
       estimatedDuration: number
     }
   ],
-  metadata: {
-    analyzedAt: string,
-    expirationDate: string,
-    fromCache: boolean
-  }
+  tips: string[],
+  timeline: Record<string, string[]>
 }
 ```
 
@@ -352,7 +366,7 @@ VoiceAdapter (Abstract)
 
 - **In-memory stores**: EventsStore, WishlistStore
 - **Session-based**: Google Calendar tokens (express-session)
-- **Cache**: AnalysisCache (expires automatically)
+- **Metadata flags**: `isAnalyzed` stored on events and Google extended properties
 
 ## Authentication Flow
 
@@ -378,19 +392,25 @@ Return to app (authenticated)
 
 ## AI Integration Points
 
-### 1. Event Analysis (EventAnalyzer)
+### 1. Voice Transcription (Whisper)
+- **When**: VoiceAssistant finishes recording audio
+- **Model**: whisper-1 (OpenAI)
+- **Input**: Audio blob (webm/ogg/mp3) captured via MediaRecorder
+- **Output**: Transcript text, segment timings, confidence heuristics
+
+### 2. Event Analysis (EventAnalyzer)
 - **When**: User clicks "Analyze Event"
 - **Model**: GPT-3.5-turbo
 - **Input**: Event details, weather data (if available)
 - **Output**: Structured preparation tasks and checklists
 
-### 2. Voice Intent Parsing (OpenAIVoiceAdapter)
+### 3. Voice Intent Parsing (OpenAIVoiceAdapter)
 - **When**: User speaks a command
 - **Model**: GPT-3.5-turbo
 - **Input**: Transcript, conversation history
 - **Output**: Intent, event details, follow-up questions
 
-### 3. Wishlist Matching (WishlistAnalyzer)
+### 4. Wishlist Matching (WishlistAnalyzer)
 - **When**: User clicks "Find Time"
 - **Model**: GPT-3.5-turbo
 - **Input**: Wishlist items, free time slots
@@ -408,35 +428,37 @@ Return to app (authenticated)
 - **Purpose**: LLM-powered analysis and parsing
 - **Model**: GPT-3.5-turbo
 - **Usage**:
+  - Voice transcription (Whisper)
   - Event analysis (checklists, preparation tasks)
   - Voice command parsing (intent, details, follow-ups)
   - Wishlist matching (duration estimation, suggestions)
 
 ## Recent Changes
 
-### Latest Updates (Nov 2024)
+### Latest Updates (Nov 2025)
 
-1. **Simplified Wishlist**
-   - Removed duplicate WishlistReview modal
-   - Single Wishlist tab component
-   - Shows 3 matches inline with user choice
-   - Auto-cleanup of past/scheduled items
+1. **Metadata-based Analysis Tracking**
+   - Removed in-memory analysis cache
+   - `isAnalyzed` stored on events and Google extended properties
+   - Prevents duplicate checklist generation
 
-2. **LLM-Based Voice Assistant**
-   - Follow-up question loop (max 5 questions)
-   - Conversation state management
-   - Support for wishlist additions via voice
+2. **Document-Aware Checklists**
+   - Event descriptions can include Google Docs URLs
+   - `documentProcessor` fetches/summarizes docs for EventAnalyzer prompts
 
-3. **Event Color Coding**
-   - Doctor appointments: Bright orange
-   - To-dos: Yellow
-   - Everyday tasks: Green
-   - Work tasks: Blue (with daily meeting variants)
+3. **Calendar UX Improvements**
+   - Calendar highlights the active event day
+   - Uniform action buttons (“Add to Calendar”, “Re-generate checklist”)
+   - Navigation tab renamed to “Generate Event Milestones”
 
-4. **Event Deletion**
-   - Delete from both Google Calendar and local events
-   - Confirmation dialogs
-   - UI cleanup after deletion
+4. **Logo & Visual Refresh**
+   - Updated header logo
+   - Streamlined Uber booking entry point inside checklist items only
+
+5. **Whisper-powered Voice Capture**
+   - Browser records audio with MediaRecorder
+   - Audio sent to `/api/voice/transcribe` for Whisper STT
+   - Transcript fed into existing intent parsing and follow-up flow
 
 ## File Organization
 
@@ -466,7 +488,7 @@ CalendarAIAgent/
 │       ├── voice/                       # Voice adapters
 │       ├── eventsStore.js               # Event storage
 │       ├── wishlistStore.js             # Wishlist storage
-│       ├── analysisCache.js             # Analysis caching
+│       ├── documentProcessor.js         # Google Docs processing
 │       └── calendarConflictService.js   # Conflict detection
 ├── ARCHITECTURE.md                      # This file
 └── package.json
@@ -481,6 +503,5 @@ CalendarAIAgent/
 - [ ] Mobile app (React Native)
 - [ ] Push notifications for wishlist suggestions
 - [ ] Recurring event handling improvements
-- [ ] **Task delegation system** - See [DELEGATION_DESIGN.md](./DELEGATION_DESIGN.md) for detailed architecture
-- [ ] **Document upload for meeting prep** - See [DOCUMENT_UPLOAD_DESIGN.md](./DOCUMENT_UPLOAD_DESIGN.md) for analysis and recommended phased approach
-
+- [ ] **Task delegation system** – see [DELEGATION_DESIGN.md](./DELEGATION_DESIGN.md) for detailed architecture
+- [ ] **Document upload for meeting prep** – see [DOCUMENT_UPLOAD_DESIGN.md](./DOCUMENT_UPLOAD_DESIGN.md) for analysis and phased approach

@@ -16,71 +16,34 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
   const [followUpCount, setFollowUpCount] = useState(0);
   const [isInFollowUpLoop, setIsInFollowUpLoop] = useState(false);
 
-  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const synthesisRef = useRef(null);
   const autoListenTimeoutRef = useRef(null);
+  const autoStopTimeoutRef = useRef(null);
 
-  // Initialize Web Speech API
+  // Cleanup on unmount
   useEffect(() => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      console.warn('Speech recognition not supported in this browser');
-      return;
-    }
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => {
-      setIsListening(true);
-      setStatus('listening');
-    };
-
-    recognition.onresult = (event) => {
-      const transcriptText = event.results[0][0].transcript;
-      setTranscript(transcriptText);
-      handleVoiceInput(transcriptText);
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      setIsListening(false);
-      setStatus('idle');
-      if (event.error === 'no-speech') {
-        if (isInFollowUpLoop) {
-          // Continue listening for follow-up
-          setTimeout(() => {
-            if (recognitionRef.current) {
-              recognitionRef.current.start();
-            }
-          }, 1000);
-        } else {
-          speak('I didn\'t catch that. Please try again.');
-        }
-      }
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      if (!isInFollowUpLoop && status === 'listening') {
-        setStatus('idle');
-      }
-    };
-
-    recognitionRef.current = recognition;
-
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
       }
       if (autoListenTimeoutRef.current) {
         clearTimeout(autoListenTimeoutRef.current);
       }
+
+      if (autoStopTimeoutRef.current) {
+        clearTimeout(autoStopTimeoutRef.current);
+      }
+      if (autoStopTimeoutRef.current) {
+        clearTimeout(autoStopTimeoutRef.current);
+      }
     };
-  }, [isInFollowUpLoop, status]);
+  }, []);
 
   // Initialize Speech Synthesis
   useEffect(() => {
@@ -126,27 +89,186 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
     synthesisRef.current.speak(utterance);
   }, []);
 
-  const startListening = () => {
-    // Reset conversation state
-    setConversationHistory([]);
-    setFollowUpCount(0);
-    setIsInFollowUpLoop(false);
-    setTranscript('');
-    setResponse('');
-    setConflictData(null);
-    setAlternatives([]);
-    setPendingEvent(null);
+  const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result;
+        if (typeof result === 'string') {
+          const base64Data = result.split(',')[1];
+          resolve(base64Data);
+        } else {
+          reject(new Error('Failed to read audio data'));
+        }
+      };
+      reader.onerror = () => reject(reader.error || new Error('Failed to read audio data'));
+      reader.readAsDataURL(blob);
+    });
+  };
 
-    if (recognitionRef.current && !isListening) {
-      recognitionRef.current.start();
+  const transcribeAudio = async (audioBlob) => {
+    try {
+      setStatus('processing');
+
+      if (!audioBlob || audioBlob.size === 0) {
+        const message = 'I did not capture any sound. Could you try speaking again?';
+        setResponse(message);
+        speak(message);
+        return;
+      }
+
+      const base64Audio = await blobToBase64(audioBlob);
+      const transcriptionResponse = await axios.post('/api/voice/transcribe', {
+        audio: base64Audio,
+        mimeType: audioBlob.type || 'audio/webm'
+      });
+
+      if (!transcriptionResponse.data.success) {
+        throw new Error(transcriptionResponse.data.error || 'Transcription failed');
+      }
+
+      const transcriptText = (transcriptionResponse.data.transcript || '').trim();
+
+      if (!transcriptText) {
+        const message = 'I had trouble hearing that. Please try speaking again.';
+        setResponse(message);
+        speak(message, () => {
+          if (isInFollowUpLoop) {
+            autoListenTimeoutRef.current = setTimeout(() => {
+              startListening(true);
+            }, 500);
+          }
+        });
+        setStatus('idle');
+        return;
+      }
+
+      setTranscript(transcriptText);
+      await handleVoiceInput(transcriptText);
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      const errorMessage = 'Sorry, I ran into an issue understanding that. Please try again.';
+      setResponse(errorMessage);
+      speak(errorMessage);
+      setStatus('idle');
     }
   };
 
-  const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+  const startListening = async (preserveContext = false) => {
+    try {
+      if (status === 'speaking') {
+        return;
+      }
+
+      if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
+        const message = 'Your browser does not support voice capture. Please try a different browser.';
+        setResponse(message);
+        speak(message);
+        return;
+      }
+
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        return;
+      }
+
+      if (autoListenTimeoutRef.current) {
+        clearTimeout(autoListenTimeoutRef.current);
+      }
+
+      if (!preserveContext) {
+        setConversationHistory([]);
+        setFollowUpCount(0);
+        setIsInFollowUpLoop(false);
+        setResponse('');
+      }
+
+      setTranscript('');
+      setConflictData(null);
+      setAlternatives([]);
+      setPendingEvent(null);
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = mediaStream;
+
+      const recorder = new MediaRecorder(mediaStream);
+      audioChunksRef.current = [];
+
+      recorder.onstart = () => {
+        setIsListening(true);
+        setStatus('listening');
+        autoStopTimeoutRef.current = setTimeout(() => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
+        }, 12000);
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event.error || event.name);
+        setIsListening(false);
+        setStatus('idle');
+        setResponse('There was an issue capturing audio. Please try again.');
+      };
+
+      recorder.onstop = async () => {
+        setIsListening(false);
+
+        if (autoStopTimeoutRef.current) {
+          clearTimeout(autoStopTimeoutRef.current);
+        }
+
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach(track => track.stop());
+          mediaStreamRef.current = null;
+        }
+
+        const chunks = audioChunksRef.current || [];
+        audioChunksRef.current = [];
+
+        if (!chunks.length) {
+          if (!preserveContext) {
+            setStatus('idle');
+          }
+          return;
+        }
+
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(chunks, { type: mimeType });
+        await transcribeAudio(audioBlob);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+    } catch (error) {
+      console.error('Microphone access error:', error);
+      const message = 'I need microphone access to listen. Please enable it in your browser settings.';
+      setResponse(message);
+      speak(message);
       setStatus('idle');
+      setIsListening(false);
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+      }
+    }
+  };
+
+  const stopListening = ({ preserveContext = false } = {}) => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+
+    if (autoStopTimeoutRef.current) {
+      clearTimeout(autoStopTimeoutRef.current);
+    }
+
+    if (!preserveContext) {
       setIsInFollowUpLoop(false);
       setFollowUpCount(0);
       setConversationHistory([]);
@@ -208,9 +330,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
         speak(followUpQuestion, () => {
           // Auto-start listening after speaking
           autoListenTimeoutRef.current = setTimeout(() => {
-            if (recognitionRef.current && !isListening) {
-              recognitionRef.current.start();
-            }
+            startListening(true);
           }, 500);
         });
         return;

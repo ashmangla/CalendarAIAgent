@@ -18,6 +18,15 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [showDescriptionEditor, setShowDescriptionEditor] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
   const [detectedDocUrls, setDetectedDocUrls] = useState([]);
+  const [showMealPlanModal, setShowMealPlanModal] = useState(false);
+  const [mealPlanPreferences, setMealPlanPreferences] = useState({
+    days: 7,
+    familySize: '',
+    targetCalories: 2000,
+    diet: '',
+    exclude: ''
+  });
+  const [generatingMealPlan, setGeneratingMealPlan] = useState(false);
   
   // Check if any of the preparation tasks involve transportation
   const needsTransportation = () => {
@@ -71,6 +80,38 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }
   }, [event, editedDescription]);
 
+  // Generate meal plan with user preferences
+  const handleGenerateMealPlan = async () => {
+    setGeneratingMealPlan(true);
+    setError(null);
+    
+    try {
+      const response = await axios.post('/api/generate-meal-plan', {
+        event: event,
+        preferences: mealPlanPreferences,
+        analysis: analysis // Pass current analysis to update it
+      });
+
+      if (response.data.success) {
+        // Update analysis with meal plan
+        setAnalysis(response.data.analysis);
+        setShowMealPlanModal(false);
+        // Show success message
+      } else {
+        setError(response.data.message || 'Failed to generate meal plan');
+      }
+    } catch (err) {
+      if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else {
+        setError('Error generating meal plan. Please try again.');
+      }
+      console.error('Error:', err);
+    } finally {
+      setGeneratingMealPlan(false);
+    }
+  };
+
   // Check event status on mount
   useEffect(() => {
     if (event) {
@@ -84,6 +125,13 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       }
     }
   }, [event, analyzeEvent]);
+
+  // Check if meal plan preferences are needed after analysis
+  useEffect(() => {
+    if (analysis && analysis.requiresMealPlanPreferences) {
+      setShowMealPlanModal(true);
+    }
+  }, [analysis]);
 
   const getPriorityColor = (priority) => {
     switch (priority.toLowerCase()) {
@@ -511,6 +559,30 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                 </div>
               </div>
 
+              {analysis.mealPlan && (
+                <div className="meal-plan-info" style={{ marginBottom: '20px', padding: '15px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac' }}>
+                  <h5>🍽️ Meal Plan Generated</h5>
+                  <p style={{ margin: '10px 0' }}>{analysis.mealPlan.message}</p>
+                  <a 
+                    href={analysis.mealPlan.document.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    style={{ 
+                      display: 'inline-block',
+                      marginTop: '10px',
+                      padding: '8px 16px',
+                      background: '#10b981',
+                      color: 'white',
+                      textDecoration: 'none',
+                      borderRadius: '6px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    📄 Open Meal Plan: {analysis.mealPlan.document.title}
+                  </a>
+                </div>
+              )}
+
               {analysis.weather && (
                 <div className="weather-info">
                   <h5>🌤️ Weather Forecast</h5>
@@ -778,6 +850,121 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
             onClose={() => setShowUberModal(false)}
             onBook={handleUberBooking}
           />
+        )}
+
+        {/* Meal Plan Preferences Modal */}
+        {showMealPlanModal && (
+          <div className="meal-plan-modal-overlay" onClick={() => setShowMealPlanModal(false)}>
+            <div className="meal-plan-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="meal-plan-modal-header">
+                <h3>🍽️ Meal Planning Preferences</h3>
+                <button className="close-btn" onClick={() => setShowMealPlanModal(false)}>×</button>
+              </div>
+              <div className="meal-plan-modal-content">
+                <p>To generate your personalized meal plan, please provide the following information:</p>
+                
+                <div className="meal-plan-form">
+                  <label>
+                    <strong>Number of Days:</strong>
+                    <input
+                      type="number"
+                      min="1"
+                      max="7"
+                      value={mealPlanPreferences.days}
+                      onChange={(e) => setMealPlanPreferences({
+                        ...mealPlanPreferences,
+                        days: parseInt(e.target.value) || 7
+                      })}
+                    />
+                  </label>
+
+                  <label>
+                    <strong>Number of People:</strong>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="e.g., 4"
+                      value={mealPlanPreferences.familySize}
+                      onChange={(e) => setMealPlanPreferences({
+                        ...mealPlanPreferences,
+                        familySize: e.target.value
+                      })}
+                    />
+                  </label>
+
+                  <label>
+                    <strong>Daily Calorie Target:</strong>
+                    <input
+                      type="number"
+                      min="1000"
+                      max="5000"
+                      step="100"
+                      value={mealPlanPreferences.targetCalories}
+                      onChange={(e) => setMealPlanPreferences({
+                        ...mealPlanPreferences,
+                        targetCalories: parseInt(e.target.value) || 2000
+                      })}
+                    />
+                  </label>
+
+                  <label>
+                    <strong>Dietary Preference (optional):</strong>
+                    <select
+                      value={mealPlanPreferences.diet}
+                      onChange={(e) => setMealPlanPreferences({
+                        ...mealPlanPreferences,
+                        diet: e.target.value
+                      })}
+                    >
+                      <option value="">None</option>
+                      <option value="vegetarian">Vegetarian</option>
+                      <option value="vegan">Vegan</option>
+                      <option value="paleo">Paleo</option>
+                      <option value="primal">Primal</option>
+                      <option value="ketogenic">Ketogenic</option>
+                      <option value="pescetarian">Pescetarian</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <strong>Exclude Ingredients (comma-separated, optional):</strong>
+                    <input
+                      type="text"
+                      placeholder="e.g., shellfish, nuts, dairy"
+                      value={mealPlanPreferences.exclude}
+                      onChange={(e) => setMealPlanPreferences({
+                        ...mealPlanPreferences,
+                        exclude: e.target.value
+                      })}
+                    />
+                  </label>
+                </div>
+
+                {error && (
+                  <div className="error-message" style={{ color: '#ff4757', marginTop: '10px' }}>
+                    {error}
+                  </div>
+                )}
+
+                <div className="meal-plan-modal-actions">
+                  <button
+                    className="cancel-btn"
+                    onClick={() => setShowMealPlanModal(false)}
+                    disabled={generatingMealPlan}
+                  >
+                    Skip
+                  </button>
+                  <button
+                    className="generate-btn"
+                    onClick={handleGenerateMealPlan}
+                    disabled={generatingMealPlan}
+                  >
+                    {generatingMealPlan ? '⏳ Generating...' : '🍽️ Generate Meal Plan'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
     </div>
   );
