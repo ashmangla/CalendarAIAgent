@@ -11,6 +11,7 @@ const googleCalendarRoutes = require('./routes/googleCalendar');
 const voiceRoutes = require('./routes/voice');
 const wishlistRoutes = require('./routes/wishlist');
 const colorClassificationService = require('./services/colorClassificationService');
+const taskCache = require('./services/taskCache');
 
 const app = express();
 
@@ -100,6 +101,82 @@ async function refreshWeatherDataForAnalysis(analysis, event) {
     console.warn('Weather refresh failed:', error.message);
     return false;
   }
+}
+
+async function getLinkedTasksForEvent(eventId, req, options = {}) {
+  if (!eventId) {
+    return [];
+  }
+
+  const tokens = options.tokens || req.session?.tokens;
+  const linkedTasks = [];
+
+  if (tokens && tokens.access_token) {
+    try {
+      const { google } = require('googleapis');
+      const oauth2Client = new google.auth.OAuth2();
+      oauth2Client.setCredentials(tokens);
+
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+      const now = new Date();
+      const ninetyDaysLater = new Date();
+      ninetyDaysLater.setDate(now.getDate() + 90);
+
+      let nextPageToken = null;
+      do {
+        const response = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: now.toISOString(),
+          timeMax: ninetyDaysLater.toISOString(),
+          maxResults: 250,
+          singleEvents: true,
+          orderBy: 'startTime',
+          pageToken: nextPageToken || undefined
+        });
+
+        (response.data.items || []).forEach(event => {
+          const originalEventId = event.extendedProperties?.private?.originalEventId;
+          const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
+                               event.extendedProperties?.private?.isChecklistEvent === 'true';
+
+          if (originalEventId === eventId && isAIGenerated) {
+            linkedTasks.push({
+              id: event.id,
+              title: event.summary || 'Checklist Task',
+              date: event.start?.dateTime || event.start?.date,
+              endDate: event.end?.dateTime || event.end?.date,
+              description: event.description || '',
+              location: event.location || '',
+              priority: event.extendedProperties?.private?.priority || null,
+              category: event.extendedProperties?.private?.category || null,
+              estimatedTime: event.extendedProperties?.private?.estimatedTime || null,
+              originalEventId: originalEventId,
+              originalEventTitle: event.extendedProperties?.private?.originalEventTitle || null,
+              source: 'google',
+              isAIGenerated: true,
+              isChecklistEvent: true
+            });
+          }
+        });
+
+        nextPageToken = response.data.nextPageToken;
+      } while (nextPageToken);
+
+    } catch (googleError) {
+      console.error('❌ Error fetching linked tasks from Google Calendar:', googleError.message);
+    }
+  }
+
+  if (linkedTasks.length === 0) {
+    mockCalendarEvents.forEach(event => {
+      if (event.originalEventId === eventId && event.isAIGenerated) {
+        linkedTasks.push({ ...event });
+      }
+    });
+  }
+
+  return linkedTasks;
 }
 
 // Middleware
@@ -324,11 +401,34 @@ app.post('/api/analyze-event', async (req, res) => {
     // Check if event has already been analyzed (from metadata)
     const eventIdentifier = eventToAnalyze.id || eventToAnalyze.eventId;
     const isAlreadyAnalyzed = eventToAnalyze.isAnalyzed || eventToAnalyze.extendedProperties?.private?.isAnalyzed === 'true';
-    
+    const cachedTasks = eventIdentifier ? taskCache.getRemainingTasks(eventIdentifier) : null;
+
     if (isAlreadyAnalyzed) {
-      return res.status(400).json({
-        success: false,
-        message: 'This event has already been analyzed'
+      const remainingTasks = Array.isArray(cachedTasks) ? cachedTasks : [];
+      const linkedTasks = eventIdentifier ? await getLinkedTasksForEvent(eventIdentifier, req) : [];
+      const analysisPayload = {
+        eventSummary: `Remaining checklist items for ${eventToAnalyze.title || 'this event'}`,
+        preparationTasks: remainingTasks,
+        timeline: { timeframe: [] },
+        tips: [],
+        estimatedPrepTime: remainingTasks.length > 0 ? 'Pending tasks remaining' : '0 minutes remaining',
+        requiresMealPlanPreferences: false,
+        remainingTasksOnly: true,
+        allTasksScheduled: remainingTasks.length === 0,
+        linkedTasks: linkedTasks,
+        totalLinkedTasks: linkedTasks.length,
+        remainingTaskCount: remainingTasks.length
+      };
+
+      return res.json({
+        success: true,
+        event: { ...eventToAnalyze, isAnalyzed: true },
+        analysis: analysisPayload,
+        message: remainingTasks.length > 0
+          ? 'Loaded remaining checklist items that have not been added to your calendar.'
+          : linkedTasks.length > 0
+            ? 'All checklist items are on your calendar. Review them below.'
+            : 'All checklist items have already been added to your calendar.'
       });
     }
 
@@ -350,6 +450,15 @@ app.post('/api/analyze-event', async (req, res) => {
 
     // Refresh weather data when needed
     await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
+    if (eventIdentifier) {
+      taskCache.setRemainingTasks(eventIdentifier, analysis.preparationTasks || []);
+    }
+
+    const linkedTasks = eventIdentifier ? await getLinkedTasksForEvent(eventIdentifier, req) : [];
+    analysis.linkedTasks = linkedTasks;
+    analysis.remainingTasksOnly = false;
+    analysis.remainingTaskCount = Array.isArray(analysis.preparationTasks) ? analysis.preparationTasks.length : 0;
+    analysis.totalLinkedTasks = linkedTasks.length;
     
     // Don't mark the event as analyzed yet - wait until tasks are added
     // If this event is in Google Calendar, remove the isAnalyzed flag
@@ -700,6 +809,10 @@ app.post('/api/add-ai-tasks', async (req, res) => {
       });
     }
 
+    if (originalEventId) {
+      taskCache.markTasksCompleted(originalEventId, selectedTasks);
+    }
+
     res.json({
       success: true,
       addedEvents: addedEvents,
@@ -720,7 +833,6 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 app.post('/api/get-linked-tasks', async (req, res) => {
   try {
     const { eventId } = req.body;
-    const tokens = req.session?.tokens;
 
     if (!eventId) {
       return res.status(400).json({
@@ -729,72 +841,7 @@ app.post('/api/get-linked-tasks', async (req, res) => {
       });
     }
 
-    const linkedTasks = [];
-
-    // If user has Google Calendar tokens, fetch from Google Calendar
-    if (tokens && tokens.access_token) {
-      try {
-        const { google } = require('googleapis');
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials(tokens);
-
-        const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-        // Fetch events from Google Calendar
-        const now = new Date();
-        const oneMonthLater = new Date(now);
-        oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
-
-        const response = await calendar.events.list({
-          calendarId: 'primary',
-          timeMin: now.toISOString(),
-          timeMax: oneMonthLater.toISOString(),
-          maxResults: 250,
-          singleEvents: true,
-          orderBy: 'startTime'
-        });
-
-        // Filter events that are linked to this event
-        (response.data.items || []).forEach(event => {
-          const originalEventId = event.extendedProperties?.private?.originalEventId;
-          const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
-                               event.extendedProperties?.private?.isChecklistEvent === 'true';
-
-          if (originalEventId === eventId && isAIGenerated) {
-            linkedTasks.push({
-              id: event.id,
-              title: event.summary,
-              date: event.start?.dateTime || event.start?.date,
-              endDate: event.end?.dateTime || event.end?.date,
-              description: event.description || '',
-              location: event.location || '',
-              priority: event.extendedProperties?.private?.priority,
-              category: event.extendedProperties?.private?.category,
-              originalEventId: originalEventId,
-              originalEventTitle: event.extendedProperties?.private?.originalEventTitle,
-              isAIGenerated: true,
-              isChecklistEvent: true,
-              source: 'google'
-            });
-          }
-        });
-
-        console.log(`📋 Found ${linkedTasks.length} linked tasks for event ${eventId}`);
-
-      } catch (googleError) {
-        console.error('❌ Error fetching linked tasks from Google Calendar:', googleError.message);
-        // Fall through to check mock events
-      }
-    }
-
-    // If not found in Google Calendar, check mock events
-    if (linkedTasks.length === 0) {
-      mockCalendarEvents.forEach(event => {
-        if (event.originalEventId === eventId && event.isAIGenerated) {
-          linkedTasks.push(event);
-        }
-      });
-    }
+    const linkedTasks = await getLinkedTasksForEvent(eventId, req);
 
     res.json({
       success: true,
@@ -807,6 +854,34 @@ app.post('/api/get-linked-tasks', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch linked tasks',
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/get-remaining-tasks', (req, res) => {
+  try {
+    const { eventId } = req.body;
+
+    if (!eventId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Event ID is required'
+      });
+    }
+
+    const remainingTasks = taskCache.getRemainingTasks(eventId) || [];
+
+    res.json({
+      success: true,
+      tasks: remainingTasks,
+      count: remainingTasks.length
+    });
+  } catch (error) {
+    console.error('Error fetching remaining tasks:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch remaining tasks',
       error: error.message
     });
   }

@@ -22,6 +22,29 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
   const synthesisRef = useRef(null);
   const autoListenTimeoutRef = useRef(null);
   const autoStopTimeoutRef = useRef(null);
+  const conversationIdRef = useRef(null);
+
+  const updateConversationId = useCallback((nextId) => {
+    const normalizedId = nextId || null;
+    conversationIdRef.current = normalizedId;
+  }, []);
+
+  const clearConversation = useCallback(async () => {
+    if (!conversationIdRef.current) {
+      updateConversationId(null);
+      return;
+    }
+
+    try {
+      await axios.post('/api/voice/conversation/clear', {
+        conversationId: conversationIdRef.current
+      });
+    } catch (error) {
+      console.error('Error clearing voice conversation:', error);
+    } finally {
+      updateConversationId(null);
+    }
+  }, [updateConversationId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -42,8 +65,10 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       if (autoStopTimeoutRef.current) {
         clearTimeout(autoStopTimeoutRef.current);
       }
+
+      clearConversation();
     };
-  }, []);
+  }, [clearConversation]);
 
   // Initialize Speech Synthesis
   useEffect(() => {
@@ -176,6 +201,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       }
 
       if (!preserveContext) {
+        await clearConversation();
         setConversationHistory([]);
         setFollowUpCount(0);
         setIsInFollowUpLoop(false);
@@ -286,7 +312,8 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
         context: {
           currentDate: new Date().toISOString().split('T')[0],
           conversationHistory: conversationHistory,
-          followUpCount: followUpCount
+          followUpCount: followUpCount,
+          conversationId: conversationIdRef.current
         }
       });
 
@@ -301,8 +328,13 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
         readyToProcess, 
         abort, 
         abortMessage,
-        conversationHistory: updatedHistory 
+        conversationHistory: updatedHistory,
+        conversationId: returnedConversationId
       } = intentResponse.data;
+
+      if (returnedConversationId !== undefined) {
+        updateConversationId(returnedConversationId);
+      }
 
       // Update conversation history
       if (updatedHistory) {
@@ -317,6 +349,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
           setFollowUpCount(0);
           setConversationHistory([]);
         });
+        await clearConversation();
         return;
       }
 
@@ -380,11 +413,16 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       const conflictResponse = await axios.post('/api/voice/check-conflict', {
         eventDetails,
         existingEvents: existingEvents || [],
-        tokens: userInfo?.tokens || null
+        tokens: userInfo?.tokens || null,
+        conversationId: conversationIdRef.current
       });
 
       if (!conflictResponse.data.success) {
         throw new Error(conflictResponse.data.error || 'Failed to check conflicts');
+      }
+
+      if (conflictResponse.data.conversationId !== undefined) {
+        updateConversationId(conflictResponse.data.conversationId);
       }
 
       const { hasConflict, conflictInfo, alternatives: altTimes, response: conflictResponseText, allowOverride } = conflictResponse.data;
@@ -583,6 +621,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       await createEvent(pendingEvent, true);
     } else if (choice.type === 'cancel') {
       // User cancelled
+      await clearConversation();
       setPendingEvent(null);
       setConflictData(null);
       setAlternatives([]);
@@ -598,7 +637,8 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       const createResponse = await axios.post('/api/voice/create-event', {
         eventDetails,
         tokens: userInfo?.tokens || null,
-        override
+        override,
+        conversationId: conversationIdRef.current
       });
 
       if (!createResponse.data.success) {
@@ -625,6 +665,10 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       setResponse(finalMessage);
       speak(finalMessage);
       setStatus('idle');
+
+      if (createResponse.data.conversationCleared) {
+        updateConversationId(null);
+      }
     } catch (error) {
       console.error('Error creating event:', error);
       const errorMsg = error.response?.data?.error || error.message || 'Sorry, I couldn\'t create that event.';
@@ -686,7 +730,10 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
           </div>
           {onClose && (
             <button
-              onClick={onClose}
+              onClick={() => {
+                clearConversation();
+                onClose();
+              }}
               className="voice-close-btn"
               title="Close Voice Assistant"
               style={{

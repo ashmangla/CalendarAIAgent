@@ -27,15 +27,85 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     exclude: ''
   });
   const [generatingMealPlan, setGeneratingMealPlan] = useState(false);
-  
-  // Check if any of the preparation tasks involve transportation
-  const needsTransportation = () => {
-    if (!analysis || !analysis.preparationTasks) return false;
 
-    // Check if any task is a transportation task
-    return analysis.preparationTasks.some(task => isTransportationTask(task));
+  useEffect(() => {
+    setSelectedTasks([]);
+  }, [analysis]);
+
+  const preparationTasks = Array.isArray(analysis?.preparationTasks)
+    ? analysis.preparationTasks
+    : [];
+  const hasPreparationTasks = preparationTasks.length > 0;
+  const linkedTasks = Array.isArray(analysis?.linkedTasks)
+    ? analysis.linkedTasks
+    : [];
+  const hasLinkedTasks = linkedTasks.length > 0;
+  const formatLinkedTaskDate = (dateStr) => {
+    if (!dateStr) {
+      return 'Date TBD';
+    }
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) {
+      return dateStr;
+    }
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
+  const addSelectedTasksToCalendar = async () => {
+    if (selectedTasks.length === 0) {
+      alert('Please select at least one task to add to your calendar.');
+      return;
+    }
+
+    setAddingTasks(true);
+    try {
+      const response = await axios.post('/api/add-ai-tasks', {
+        selectedTasks: selectedTasks,
+        originalEventId: event.id
+      });
+
+      const addedEvents = response.data.addedEvents || [];
+      if (response.data.success) {
+        setIsAlreadyAnalyzed(true);
+        onTasksAdded && onTasksAdded(addedEvents);
+
+        setAnalysis(prev => {
+          if (!prev) return prev;
+
+          const selectedIds = new Set(selectedTasks.map(task => task.id || task.task));
+          const remainingTasks = (prev.preparationTasks || []).filter(task => {
+            const identifier = task.id || task.task;
+            return !selectedIds.has(identifier);
+          });
+
+          const updatedLinked = [...(prev.linkedTasks || []), ...addedEvents];
+
+          return {
+            ...prev,
+            preparationTasks: remainingTasks,
+            linkedTasks: updatedLinked,
+            remainingTaskCount: remainingTasks.length,
+            totalLinkedTasks: updatedLinked.length
+          };
+        });
+
+        setSelectedTasks([]);
+      } else {
+        setError('Failed to add tasks to calendar');
+      }
+    } catch (err) {
+      setError('Error adding tasks to calendar. Please try again.');
+      console.error('Error:', err);
+    } finally {
+      setAddingTasks(false);
+    }
+  };
+  
   const analyzeEvent = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -155,7 +225,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
   const updateChecklistItem = (taskId, itemIndex, newValue) => {
     const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
     
     if (!currentTask) return;
     
@@ -178,7 +248,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
   const addChecklistItem = (taskId, newItem = 'New item') => {
     const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
     
     if (!currentTask) return;
     
@@ -200,7 +270,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   
   const addTransportationToChecklist = (taskId) => {
     const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
     
     if (!currentTask) return;
     
@@ -232,7 +302,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
   const removeChecklistItem = (taskId, itemIndex) => {
     const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
     
     if (!currentTask) return;
     
@@ -254,7 +324,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
   const updateTaskDateTime = (taskId, newDate, newTime) => {
     const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || analysis.preparationTasks.find(t => (t.id || t.task) === taskId);
+    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
     
     if (!currentTask) return;
     
@@ -345,35 +415,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     
     if (isTransportationTask(task)) {
       setShowUberModal(true);
-    }
-  };
-
-  const addSelectedTasksToCalendar = async () => {
-    if (selectedTasks.length === 0) {
-      alert('Please select at least one task to add to your calendar.');
-      return;
-    }
-
-    setAddingTasks(true);
-    try {
-      const response = await axios.post('/api/add-ai-tasks', {
-        selectedTasks: selectedTasks,
-        originalEventId: event.id
-      });
-
-      if (response.data.success) {
-        // Now mark the event as analyzed since tasks have been added
-        setIsAlreadyAnalyzed(true);
-        onTasksAdded && onTasksAdded(response.data.addedEvents);
-        onClose();
-      } else {
-        setError('Failed to add tasks to calendar');
-      }
-    } catch (err) {
-      setError('Error adding tasks to calendar. Please try again.');
-      console.error('Error:', err);
-    } finally {
-      setAddingTasks(false);
     }
   };
 
@@ -630,9 +671,14 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
               <div className="preparation-tasks">
                 <h5>✅ Preparation Tasks</h5>
-                <p className="task-selection-info">Select tasks to add to your calendar:</p>
-                <div className="tasks-grid">
-                  {analysis.preparationTasks.map((task, index) => {
+                <p className="task-selection-info">
+                  {analysis?.remainingTasksOnly
+                    ? 'These are the remaining checklist tasks that have not been scheduled yet.'
+                    : 'Select tasks to add to your calendar:'}
+                </p>
+                {hasPreparationTasks ? (
+                  <div className="tasks-grid">
+                    {preparationTasks.map((task, index) => {
                     const displayTask = getTaskToDisplay(task);
                     const taskKey = task.id || task.task || index;
                     const isEditing = editingTaskId === taskKey;
@@ -811,8 +857,49 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                ) : (
+                  <div className="no-remaining-tasks">
+                    <p>
+                      {hasLinkedTasks
+                        ? 'All checklist items from this checklist are on your calendar.'
+                        : 'All checklist items have already been added to your calendar. 🎉'}
+                    </p>
+                    <p className="no-remaining-subtext">
+                      If plans change, click "Re-generate checklist" to get a fresh set of tasks.
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {hasLinkedTasks && (
+                <div className="linked-tasks-section">
+                  <h5>📅 Checklist Tasks on Your Calendar</h5>
+                  <p className="linked-tasks-subtext">
+                    These tasks were added from this checklist and already live on your calendar.
+                  </p>
+                  <div className="linked-tasks-list">
+                    {linkedTasks.map((task) => (
+                      <div key={task.id} className="linked-task-card">
+                        <div className="linked-task-header">
+                          <span className="linked-task-title">{task.title}</span>
+                          {task.priority && (
+                            <span className="linked-task-priority">{task.priority}</span>
+                          )}
+                        </div>
+                        <div className="linked-task-meta">
+                          <span>{formatLinkedTaskDate(task.date)}</span>
+                          {task.category && <span>• {task.category}</span>}
+                          {task.estimatedTime && <span>• {task.estimatedTime}</span>}
+                        </div>
+                        {task.description && (
+                          <p className="linked-task-description">{task.description}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
             </div>
           )}
@@ -830,12 +917,12 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               >
                 {addingTasks ? '⏳ Adding...' : '📅 Add to Calendar'}
               </button>
-              {!isChecklistEvent && !isGeneratedEvent && (
+              {!isChecklistEvent && !isGeneratedEvent && !isAlreadyAnalyzed && (
                 <button
                   className="reanalyze-btn"
                   onClick={analyzeEvent}
                   disabled={isAlreadyAnalyzed}
-                  title={isAlreadyAnalyzed ? "This event has already been analyzed" : "Re-generate the checklist"}
+                  title="Re-generate the checklist"
                 >
                   🔄 Re-generate checklist
                 </button>

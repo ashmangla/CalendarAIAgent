@@ -6,6 +6,80 @@ const eventsStore = require('../services/eventsStore');
 const wishlistStore = require('../services/wishlistStore');
 const { getTranscriptionService } = require('../services/voice/transcriptionService');
 
+function generateConversationId() {
+  return `conv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function ensureConversationStore(req) {
+  if (!req.session) {
+    return null;
+  }
+  if (!req.session.voiceConversations) {
+    req.session.voiceConversations = {};
+  }
+  return req.session.voiceConversations;
+}
+
+function getConversation(req, conversationId) {
+  if (!conversationId) {
+    return null;
+  }
+  const store = ensureConversationStore(req);
+  return store ? store[conversationId] || null : null;
+}
+
+function saveConversation(req, conversationId, conversation) {
+  if (!conversationId) {
+    return;
+  }
+  const store = ensureConversationStore(req);
+  if (store) {
+    store[conversationId] = {
+      ...(store[conversationId] || {}),
+      ...conversation,
+      updatedAt: Date.now()
+    };
+  }
+}
+
+function clearConversation(req, conversationId) {
+  if (!conversationId) {
+    return;
+  }
+  const store = ensureConversationStore(req);
+  if (store && store[conversationId]) {
+    delete store[conversationId];
+  }
+}
+
+function mergeEventDetails(base = {}, updates = {}) {
+  const merged = { ...base };
+  const fields = ['title', 'date', 'time', 'duration', 'location', 'description'];
+
+  fields.forEach(field => {
+    const value = updates[field];
+    if (value !== undefined && value !== null && value !== '') {
+      merged[field] = value;
+    }
+  });
+
+  if (merged.duration === undefined) {
+    merged.duration = 60;
+  }
+
+  return merged;
+}
+
+function hasMeaningfulEventDetails(details = {}) {
+  if (!details) {
+    return false;
+  }
+  return ['title', 'date', 'time', 'location', 'description'].some(field => {
+    const value = details[field];
+    return value !== undefined && value !== null && value !== '';
+  });
+}
+
 // Initialize voice adapter
 let voiceAdapter;
 try {
@@ -33,6 +107,8 @@ router.post('/process', async (req, res) => {
     // Extract conversation state from context
     const conversationHistory = context.conversationHistory || [];
     const followUpCount = context.followUpCount || 0;
+    let conversationId = context.conversationId || null;
+    let conversation = conversationId ? getConversation(req, conversationId) : null;
 
     // Parse intent and extract event details with conversation context
     const intentResult = await voiceAdapter.parseIntent(transcript, {
@@ -41,6 +117,44 @@ router.post('/process', async (req, res) => {
       followUpCount: followUpCount,
       ...context
     });
+
+    const managesEventConversation = ['add_event', 'needs_clarification'].includes(intentResult.intent);
+    const containsEventDetails = hasMeaningfulEventDetails(intentResult.eventDetails);
+
+    if (managesEventConversation && containsEventDetails) {
+      if (!conversation) {
+        conversationId = generateConversationId();
+        conversation = {
+          id: conversationId,
+          createdAt: Date.now(),
+          status: 'collecting',
+          eventDetails: {},
+          alternatives: []
+        };
+      }
+
+      const mergedDetails = mergeEventDetails(conversation.eventDetails, intentResult.eventDetails || {});
+      conversation.eventDetails = mergedDetails;
+      conversation.lastIntent = intentResult.intent;
+      conversation.followUpCount = followUpCount;
+      conversation.status = intentResult.intent === 'add_event' && intentResult.readyToProcess !== false
+        ? 'ready'
+        : conversation.status || 'collecting';
+
+      saveConversation(req, conversationId, conversation);
+      intentResult.eventDetails = mergedDetails;
+    } else if (conversation) {
+      // Merge any partial updates even if adapter didn't provide full details
+      const mergedDetails = mergeEventDetails(conversation.eventDetails, intentResult.eventDetails || {});
+      conversation.eventDetails = mergedDetails;
+      saveConversation(req, conversationId, conversation);
+      intentResult.eventDetails = mergedDetails;
+    }
+
+    if (intentResult.abort && conversationId) {
+      clearConversation(req, conversationId);
+      conversationId = null;
+    }
 
     res.json({
       success: true,
@@ -55,7 +169,8 @@ router.post('/process', async (req, res) => {
       readyToProcess: intentResult.readyToProcess !== false,
       abort: intentResult.abort || false,
       abortMessage: intentResult.abortMessage || null,
-      conversationHistory: intentResult.conversationHistory || conversationHistory
+      conversationHistory: intentResult.conversationHistory || conversationHistory,
+      conversationId: conversationId
     });
   } catch (error) {
     console.error('Error processing voice input:', error);
@@ -204,9 +319,17 @@ function normalizeEventsForConflictCheck(events) {
 
 router.post('/check-conflict', async (req, res) => {
   try {
-    const { eventDetails, existingEvents, tokens } = req.body;
+    const { eventDetails, existingEvents, tokens, conversationId } = req.body;
+    const conversation = conversationId ? getConversation(req, conversationId) : null;
+    const normalizedEventDetails = mergeEventDetails(conversation?.eventDetails || {}, eventDetails || {});
 
-    if (!eventDetails || !eventDetails.date || !eventDetails.time) {
+    if (conversation) {
+      conversation.eventDetails = normalizedEventDetails;
+      conversation.status = 'checking_conflict';
+      saveConversation(req, conversationId, conversation);
+    }
+
+    if (!normalizedEventDetails || !normalizedEventDetails.date || !normalizedEventDetails.time) {
       return res.status(400).json({
         success: false,
         error: 'Event details with date and time are required'
@@ -269,9 +392,9 @@ router.post('/check-conflict', async (req, res) => {
     // Check for conflicts
     const conflictResult = calendarConflictService.checkConflict(
       {
-        date: eventDetails.date,
-        time: eventDetails.time,
-        duration: eventDetails.duration || 60
+        date: normalizedEventDetails.date,
+        time: normalizedEventDetails.time,
+        duration: normalizedEventDetails.duration || 60
       },
       events
     );
@@ -281,11 +404,11 @@ router.post('/check-conflict', async (req, res) => {
 
     if (conflictResult.hasConflict) {
       // Find alternative slots
-      const requestedDate = new Date(eventDetails.date + 'T00:00:00');
+      const requestedDate = new Date(normalizedEventDetails.date + 'T00:00:00');
       alternatives = calendarConflictService.getAlternativeSuggestions(
         {
-          date: eventDetails.date,
-          duration: eventDetails.duration || 60
+          date: normalizedEventDetails.date,
+          duration: normalizedEventDetails.duration || 60
         },
         events,
         3
@@ -295,11 +418,18 @@ router.post('/check-conflict', async (req, res) => {
       conflictResponse = await voiceAdapter.generateConflictResponse(
         {
           conflictingEvent: conflictResult.conflictingEvent,
-          requestedTime: eventDetails.time,
-          requestedDate: eventDetails.date
+          requestedTime: normalizedEventDetails.time,
+          requestedDate: normalizedEventDetails.date
         },
         alternatives
       );
+    }
+
+    if (conversation) {
+      conversation.status = conflictResult.hasConflict ? 'awaiting_user_choice' : 'ready';
+      conversation.alternatives = alternatives;
+      conversation.lastConflict = conflictResult;
+      saveConversation(req, conversationId, conversation);
     }
 
     res.json({
@@ -314,7 +444,8 @@ router.post('/check-conflict', async (req, res) => {
         type: 'success',
         message: 'No conflicts found'
       }),
-      allowOverride: true // Always allow double booking
+      allowOverride: true, // Always allow double booking
+      conversationId: conversationId
     });
   } catch (error) {
     console.error('Error checking conflict:', error);
@@ -330,7 +461,16 @@ router.post('/check-conflict', async (req, res) => {
  */
 router.post('/create-event', async (req, res) => {
   try {
-    const { eventDetails, override = false } = req.body;
+    const { eventDetails: incomingEventDetails, override = false, conversationId } = req.body;
+    const conversation = conversationId ? getConversation(req, conversationId) : null;
+    let eventDetails = mergeEventDetails(conversation?.eventDetails || {}, incomingEventDetails || {});
+
+    if (conversation) {
+      conversation.eventDetails = eventDetails;
+      conversation.status = 'creating';
+      saveConversation(req, conversationId, conversation);
+    }
+
     // Use tokens from session instead of request body for security
     const tokens = req.session?.tokens || req.body.tokens;
 
@@ -392,6 +532,9 @@ router.post('/create-event', async (req, res) => {
       }
       normalizedDate = dateObj.toISOString().split('T')[0];
     }
+    
+    eventDetails.time = eventTime;
+    eventDetails.date = normalizedDate;
     
     // Create datetime string (local time)
     const startDateTime = `${normalizedDate}T${eventTime}:00`;
@@ -529,6 +672,10 @@ router.post('/create-event', async (req, res) => {
       location: eventDetails.location
     });
 
+    if (conversationId) {
+      clearConversation(req, conversationId);
+    }
+
     res.json({
       success: true,
       event: event,
@@ -536,7 +683,8 @@ router.post('/create-event', async (req, res) => {
       message: override ? 
         'Event created despite conflict. You chose to double book.' : 
         `Event created successfully${eventCreatedInGoogle ? ' in Google Calendar' : ' in local calendar'}`,
-      createdInGoogle: eventCreatedInGoogle
+      createdInGoogle: eventCreatedInGoogle,
+      conversationCleared: !!conversationId
     });
   } catch (error) {
     console.error('❌ Error in create-event endpoint:', error);
@@ -756,6 +904,31 @@ router.post('/add-to-wishlist', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to add to wishlist'
+    });
+  }
+});
+
+router.post('/conversation/clear', (req, res) => {
+  try {
+    const { conversationId } = req.body;
+
+    if (!conversationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'conversationId is required'
+      });
+    }
+
+    clearConversation(req, conversationId);
+
+    res.json({
+      success: true
+    });
+  } catch (error) {
+    console.error('Error clearing conversation context:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to clear conversation'
     });
   }
 });

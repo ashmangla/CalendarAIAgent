@@ -998,7 +998,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
             {showAnalysis && resolvedSelectedEvent && (
               <div className="event-details-panel">
-                {resolvedSelectedEvent.isAIGenerated || resolvedSelectedEvent.isAnalyzed ? (
+                {(resolvedSelectedEvent.isAIGenerated || resolvedSelectedEvent.isChecklistEvent || resolvedSelectedEvent.isGeneratedEvent) ? (
                   <EventDetails
                     event={resolvedSelectedEvent}
                     onClose={closeAnalysis}

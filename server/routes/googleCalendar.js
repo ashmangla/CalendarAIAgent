@@ -110,24 +110,32 @@ router.post('/events', async (req, res) => {
     
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
-    // Set time window to one month from now (only fetch future events)
-    const now = new Date();
-    // Ensure we're getting events from today onwards, not past
-    now.setHours(0, 0, 0, 0); // Start from beginning of today
-    const oneMonthLater = new Date(now);
-    oneMonthLater.setMonth(oneMonthLater.getMonth() + 1);
-    
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: now.toISOString(), // Only fetch events from today onwards
-      timeMax: oneMonthLater.toISOString(),
-      maxResults: 250,
-      singleEvents: true,
-      orderBy: 'startTime'
-    });
-    
+    // Fetch all future events starting today (with pagination)
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0); // Begin at midnight local time
+
+    let allEvents = [];
+    let nextPageToken = null;
+
+    do {
+      const response = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: startOfToday.toISOString(),
+        maxResults: 250,
+        singleEvents: true,
+        orderBy: 'startTime',
+        pageToken: nextPageToken || undefined
+      });
+
+      const items = response.data.items || [];
+      allEvents = allEvents.concat(items);
+      nextPageToken = response.data.nextPageToken;
+    } while (nextPageToken);
+
+    console.log(`📆 Retrieved ${allEvents.length} Google Calendar events starting ${startOfToday.toISOString().split('T')[0]}`);
+
     // Process events - keep all instances of recurring events
-    const events = (response.data.items || [])
+    const events = allEvents
       .filter(event => {
         // Keep non-recurring events
         if (!event.recurrence && !event.recurringEventId) {
@@ -240,8 +248,7 @@ router.post('/events', async (req, res) => {
           allDay: !event.start?.dateTime, // true if only date is provided
           isRecurring: !!(event.recurrence || event.recurringEventId)
         };
-      })
-      .slice(0, 50); // Limit to 50 events
+      });
     
     res.json({
       success: true,
