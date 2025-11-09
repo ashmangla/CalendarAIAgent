@@ -12,7 +12,9 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
 | Custom CSS (modular styles) | Responsive layout, theming, calendar/event visuals | Full control over styling without pulling in heavy UI frameworks |
 | Axios | HTTP client for REST calls between client and server | Promise-based API, interceptors, consistent error handling |
 | Web Speech API | Browser-native speech recognition and synthesis | No extra dependency, works across modern browsers for real-time voice UX |
-| OpenAI GPT-3.5-turbo | Event checklist generation, voice intent parsing, wishlist matching, color classification fallback | Provides rich reasoning, language understanding, reduces need for custom NLP |
+| OpenAI GPT-3.5-turbo | Event checklist generation, voice intent parsing, wishlist matching, color classification fallback, meal plan fallback | Provides rich reasoning, language understanding, reduces need for custom NLP |
+| Spoonacular API | Meal plan generation with nutritional data | Professional meal planning with recipes, ingredients, and nutrition facts |
+| Python MCP Server | Meal planning service integration via stdio | Modular meal planning service with venv isolation, calls Spoonacular API |
 | Node.js + Express | REST backend, routing, middleware, session handling | Lightweight server with huge community support and easy integration with JS stack |
 | Google Calendar API (`googleapis`) | OAuth2 auth, fetch/create/delete real calendar events | Native integration with users’ primary calendars, reliable source of truth |
 | Google Docs API (Drive readonly scope) | Fetch and summarize meeting docs referenced in events | Enables richer AI prep by grounding checklists in real materials |
@@ -42,7 +44,8 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
 │  │              │  │              │  │                       │ │
 │  │ - AI Analysis│  │ - Item List  │  │ - OAuth Flow         │ │
 │  │ - Checklists │  │ - Matching   │  │ - Session Mgmt       │ │
-│  │ - Uber Modal │  │             │  │                       │ │
+│  │ - Uber Modal │  │ - Find Time  │  │                       │ │
+│  │ - Meal Plans │  │             │  │                       │ │
 │  └──────────────┘  └──────────────┘  └───────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -61,13 +64,15 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
 │  │  /api/analyze│  │ /api/google- │  │   Services            │ │
 │  │              │  │   calendar   │  │                       │ │
-│  │ - Event      │  │ - Auth       │  │ - EventAnalyzer       │ │
-│  │   Analysis   │  │ - Sync       │  │ - WishlistAnalyzer    │ │
-│  │ - Document   │  │              │  │ - VoiceAdapter       │ │
-│  │   Context    │  │              │  │ - ConflictService    │ │
+│  │ - Event      │  │ - Auth       │  │ - EventAgent          │ │
+│  │   Analysis   │  │ - Sync       │  │ - EventAnalyzer       │ │
+│  │ - Document   │  │              │  │ - WishlistAnalyzer    │ │
+│  │   Context    │  │              │  │ - VoiceAdapter       │ │
+│  │ - Meal Plans │  │              │  │ - ConflictService    │ │
 │  └──────────────┘  └──────────────┘  │ - EventsStore        │ │
 │                                      │ - WishlistStore      │ │
 │                                      │ - DocumentProcessor  │ │
+│                                      │ - MCPMealPlanClient  │ │
 │                                      └───────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -79,7 +84,16 @@ MotherBoard is an AI-powered calendar assistant that helps users prepare for eve
           │                 │  │                  │
           │ - Event Analysis│  │ - OAuth2         │
           │ - Voice Parsing │  │ - Event Sync     │
-          │ - Matching      │  │                  │
+          │ - Matching      │  │ - Metadata       │
+          │ - Meal Fallback │  │                  │
+          └─────────────────┘  └──────────────────┘
+                    │
+          ┌─────────▼────────┐  ┌────────▼─────────┐
+          │ Spoonacular API │  │ Python MCP Server│
+          │                 │  │                  │
+          │ - Meal Plans    │  │ - Subprocess     │
+          │ - Recipes       │  │ - Venv Isolated  │
+          │ - Nutrition     │  │ - CLI Mode       │
           └─────────────────┘  └──────────────────┘
 ```
 
@@ -103,7 +117,7 @@ App.js (Root)
 ```
 server/
 ├── server.js (Express app, routes setup)
-├── eventAnalyzer.js (AI event analysis)
+├── eventAnalyzer.js (AI event analysis orchestrator)
 ├── routes/
 │   ├── voice.js (Voice command processing)
 │   ├── googleCalendar.js (Google Calendar integration)
@@ -115,10 +129,13 @@ server/
     │   ├── OpenAIVoiceAdapter.js (LLM-based parsing)
     │   ├── MockVoiceAdapter.js (Fallback)
     │   └── VoiceAdapterFactory.js (Factory pattern)
+    ├── eventAgent.js (Agentic event analysis with meal planning)
+    ├── mcpMealPlanningClient.js (Python MCP server integration)
     ├── eventsStore.js (In-memory event storage)
     ├── wishlistStore.js (Wishlist item storage)
     ├── documentProcessor.js (Google Docs content + summarization)
     ├── calendarConflictService.js (Conflict detection)
+    ├── taskCache.js (Remaining task tracking)
     └── weatherService.js (Weather integration)
 ```
 
@@ -156,13 +173,27 @@ POST /api/analyze-event { event }
     ↓
 Server checks metadata (event.isAnalyzed / Google extended properties)
     ↓
-If already analyzed → return 400 (prevent duplicate runs)
+If already analyzed → return cached remaining tasks
     ↓
 EventAnalyzer gathers context (description edits, Google Docs URLs, weather)
     ↓
-OpenAI API generates tasks, checklists, timelines
+Detect if meal prep event → shouldAttemptMealPlan = true
     ↓
-Response returned to client and metadata marked analyzed after tasks added
+If meal prep detected:
+  ├─ Show meal plan preferences form (days, people, diet, calories)
+  ├─ User submits → POST /api/generate-meal-plan
+  ├─ Try Spoonacular API (via Python MCP server)
+  └─ If fails → LLM fallback with user preferences
+    ↓
+EventAgent (OpenAI) generates tasks, checklists, timelines
+    ↓
+Response returned to client
+    ↓
+User selects tasks → POST /api/add-ai-tasks
+    ↓
+Tasks added to Google Calendar with metadata
+    ↓
+Original event marked as analyzed (isAnalyzed: true, tasksCount: N)
 ```
 
 ### 3. Wishlist Matching Flow
@@ -209,17 +240,30 @@ VoiceAdapter (Abstract)
             - Simple templated responses
 ```
 
+### EventAgent
+
+- **Purpose**: Agentic event preparation analysis with meal planning
+- **Model**: GPT-3.5-turbo
+- **Output**: Structured JSON with tasks, checklists, priorities, meal plans
+- **Architecture**: Modular agent with tool integration (MCP meal planning)
+- **Features**:
+  - Meal prep detection (keywords: meal, lunch, dinner, breakfast, snack + prep)
+  - Spoonacular API integration via Python MCP server subprocess
+  - LLM fallback for meal planning when Spoonacular fails
+  - User preferences integration (days, people, diet, calories, exclusions)
+  - Context-specific checklists (travel, music, meal prep, etc.)
+  - Task date/time suggestions (always future)
+
 ### EventAnalyzer
 
-- **Purpose**: AI-powered event preparation analysis
-- **Model**: GPT-3.5-turbo
-- **Output**: Structured JSON with tasks, checklists, priorities
+- **Purpose**: Orchestrates event analysis workflow
+- **Responsibilities**: 
+  - Gathers context (weather, documents, meal plans)
+  - Calls EventAgent for AI analysis
+  - Manages metadata (isAnalyzed flags)
+  - Handles caching of remaining tasks
 - **Document Context**: Fetches/summarizes Google Docs linked in event descriptions
 - **Metadata**: Uses `isAnalyzed` flags (local + Google extended properties) to prevent duplicate analyses
-- **Features**:
-  - Weather integration for outdoor events
-  - Context-specific checklists (travel, music, etc.)
-  - Task date/time suggestions (always future)
 
 ### WishlistAnalyzer
 
@@ -277,6 +321,7 @@ VoiceAdapter (Abstract)
 ### Analysis Routes (`/api`)
 
 - `POST /analyze-event` - Analyze event and generate checklist
+- `POST /generate-meal-plan` - Generate meal plan with user preferences
 - `POST /add-ai-tasks` - Add AI-generated tasks to calendar
 - `GET /event-status/:eventId` - Get analysis metadata for event
 
@@ -416,6 +461,13 @@ Return to app (authenticated)
 - **Input**: Wishlist items, free time slots
 - **Output**: Matched items with reasoning and suggestions
 
+### 5. Meal Plan Generation (EventAgent + MCP)
+- **When**: User analyzes meal prep event and submits preferences
+- **Primary**: Spoonacular API via Python MCP server (subprocess)
+- **Fallback**: GPT-3.5-turbo with user preferences
+- **Input**: Event details, user preferences (days, people, diet, calories, exclusions)
+- **Output**: Formatted meal plan with recipes, ingredients, nutrition (or AI-generated equivalent)
+
 ## External Services
 
 ### Google Calendar API
@@ -426,36 +478,63 @@ Return to app (authenticated)
 
 ### OpenAI API
 - **Purpose**: LLM-powered analysis and parsing
-- **Model**: GPT-3.5-turbo
+- **Model**: GPT-3.5-turbo (analysis), Whisper-1 (transcription)
 - **Usage**:
   - Voice transcription (Whisper)
   - Event analysis (checklists, preparation tasks)
   - Voice command parsing (intent, details, follow-ups)
   - Wishlist matching (duration estimation, suggestions)
+  - Meal plan fallback (when Spoonacular unavailable)
+
+### Spoonacular API
+- **Purpose**: Professional meal planning and nutrition data
+- **Integration**: Called via Python MCP server subprocess
+- **Features**:
+  - Weekly/daily meal plan generation
+  - Recipe details with ingredients and instructions
+  - Nutritional information (calories, macros)
+  - Dietary restrictions and preferences support
+- **Fallback**: LLM-generated meal plans when API unavailable
 
 ## Recent Changes
 
 ### Latest Updates (Nov 2025)
 
-1. **Metadata-based Analysis Tracking**
+1. **Meal Plan Generation with LLM Fallback** ⭐ NEW
+   - Automatic meal prep event detection (keywords: meal, lunch, dinner + prep)
+   - User preferences form (days, people, diet, calories, exclusions)
+   - Primary: Spoonacular API via Python MCP server subprocess
+   - Fallback: LLM-generated meal plans with user preferences
+   - Automatic venv detection (`.mealplan-venv/bin/python`)
+   - Enhanced error handling with specific failure messages
+   - Source indicators (Spoonacular vs LLM) in UI and logs
+
+2. **Metadata-based Analysis Tracking**
    - Removed in-memory analysis cache
    - `isAnalyzed` stored on events and Google extended properties
    - Prevents duplicate checklist generation
+   - Enhanced logging for Google Calendar sync debugging
 
-2. **Document-Aware Checklists**
+3. **Task Cache System**
+   - Server-side cache for remaining (unscheduled) tasks
+   - Hydration support for analyzed events
+   - Linked tasks tracking with `tasksCount` metadata
+
+4. **Document-Aware Checklists**
    - Event descriptions can include Google Docs URLs
    - `documentProcessor` fetches/summarizes docs for EventAnalyzer prompts
 
-3. **Calendar UX Improvements**
+5. **Calendar UX Improvements**
    - Calendar highlights the active event day
-   - Uniform action buttons (“Add to Calendar”, “Re-generate checklist”)
-   - Navigation tab renamed to “Generate Event Milestones”
+   - Uniform action buttons ("Add to Calendar", "Re-generate checklist")
+   - Navigation tab renamed to "Generate Event Milestones"
+   - Meal plan preferences modal with form validation
 
-4. **Logo & Visual Refresh**
+6. **Logo & Visual Refresh**
    - Updated header logo
    - Streamlined Uber booking entry point inside checklist items only
 
-5. **Whisper-powered Voice Capture**
+7. **Whisper-powered Voice Capture**
    - Browser records audio with MediaRecorder
    - Audio sent to `/api/voice/transcribe` for Whisper STT
    - Transcript fed into existing intent parsing and follow-up flow
@@ -479,17 +558,25 @@ CalendarAIAgent/
 │   └── package.json
 ├── server/
 │   ├── server.js                        # Express app
-│   ├── eventAnalyzer.js                 # AI event analysis
+│   ├── eventAnalyzer.js                 # AI event analysis orchestrator
 │   ├── routes/
 │   │   ├── voice.js                     # Voice endpoints
 │   │   ├── googleCalendar.js            # Google Calendar API
 │   │   └── wishlist.js                  # Wishlist endpoints
 │   └── services/
 │       ├── voice/                       # Voice adapters
+│       ├── eventAgent.js                # Agentic analysis with meal planning
+│       ├── mcpMealPlanningClient.js     # Python MCP server integration
 │       ├── eventsStore.js               # Event storage
 │       ├── wishlistStore.js             # Wishlist storage
 │       ├── documentProcessor.js         # Google Docs processing
+│       ├── taskCache.js                 # Remaining task tracking
 │       └── calendarConflictService.js   # Conflict detection
+├── mcp-servers/
+│   └── meal-planning/
+│       ├── meal_planning_server.py      # Python MCP server
+│       ├── requirements.txt             # Python dependencies
+│       └── .mealplan-venv/              # Python virtual environment
 ├── ARCHITECTURE.md                      # This file
 └── package.json
 ```
