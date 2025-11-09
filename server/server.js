@@ -793,6 +793,52 @@ app.post('/api/generate-meal-plan', async (req, res) => {
   }
 });
 
+// Debug endpoint to check event metadata
+app.get('/api/debug/event/:eventId', async (req, res) => {
+  try {
+    const { eventId: rawEventId } = req.params;
+    const eventId = decodeURIComponent(rawEventId);
+    const tokens = req.session?.tokens;
+
+    if (!tokens?.access_token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Not authenticated with Google Calendar'
+      });
+    }
+
+    const { google } = require('googleapis');
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials(tokens);
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    const event = await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+
+    res.json({
+      success: true,
+      eventId: eventId,
+      summary: event.data.summary,
+      extendedProperties: event.data.extendedProperties || null,
+      metadata: {
+        isAnalyzed: event.data.extendedProperties?.private?.isAnalyzed,
+        analyzedAt: event.data.extendedProperties?.private?.analyzedAt,
+        tasksCount: event.data.extendedProperties?.private?.tasksCount,
+        isAIGenerated: event.data.extendedProperties?.private?.isAIGenerated
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching event metadata:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch event metadata',
+      error: error.message
+    });
+  }
+});
+
 // Delete event endpoint
 app.delete('/api/calendar/events/:eventId', async (req, res) => {
   try {
