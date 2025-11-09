@@ -30,17 +30,18 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
           tokens: userInfo.tokens
         });
         if (response.data.success) {
+          console.log('📅 Fetched Google Calendar events:', response.data.events.length, response.data.events.map(e => ({ title: e.title, date: e.date })));
           setEvents(response.data.events);
         } else {
           setError('Failed to fetch Google Calendar events');
         }
       } else {
         // Fetch from mock API
-        const response = await axios.get('/api/calendar/events');
-        if (response.data.success) {
-          setEvents(response.data.events);
-        } else {
-          setError('Failed to fetch calendar events');
+      const response = await axios.get('/api/calendar/events');
+      if (response.data.success) {
+        setEvents(response.data.events);
+      } else {
+        setError('Failed to fetch calendar events');
         }
       }
     } catch (err) {
@@ -602,9 +603,9 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
     // Only allow analyzing future or today's events
     if (!isPastEvent(event)) {
-      setSelectedEvent(event);
+    setSelectedEvent(event);
       setSelectedEventId(getEventIdentifier(event));
-      setShowAnalysis(true);
+    setShowAnalysis(true);
     }
   };
 
@@ -647,7 +648,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
     try {
       const eventId = event.id || event.eventId;
-      const response = await axios.delete(`/api/calendar/events/${eventId}`, {
+      const encodedEventId = encodeURIComponent(eventId);
+      const response = await axios.delete(`/api/calendar/events/${encodedEventId}`, {
         withCredentials: true
       });
 
@@ -758,9 +760,9 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
               </ol>
             </div>
           ) : (
-            <button className="refresh-btn" onClick={fetchEvents}>
-              Try Again
-            </button>
+          <button className="refresh-btn" onClick={fetchEvents}>
+            Try Again
+          </button>
           )}
         </div>
       </div>
@@ -768,7 +770,20 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
   }
 
   // Filter events for today if showTodayOnly is true
-  const displayEvents = showTodayOnly ? events.filter(event => isToday(new Date(event.date))) : events;
+  const displayEvents = showTodayOnly ? events.filter(event => {
+    const eventDate = new Date(event.date);
+    const isTodayEvent = isToday(eventDate);
+    if (showTodayOnly) {
+      console.log('🔍 Checking event:', {
+        title: event.title,
+        date: event.date,
+        eventDate: eventDate.toISOString(),
+        today: new Date().toISOString(),
+        isToday: isTodayEvent
+      });
+    }
+    return isTodayEvent;
+  }) : events;
 
   return (
     <div className="calendar-container">
@@ -781,7 +796,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
           {isGoogleConnected ? ' from Google Calendar' : ' (sample data)'}
         </div>
       </div>
-
+      
       <div className="calendar-content">
         {showTodayOnly ? (
           // Today's Events List View
@@ -793,7 +808,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                 <p>Enjoy your free day or add new events to your calendar!</p>
               </div>
             ) : (
-              <div className="events-grid">
+        <div className="events-grid">
                 {displayEvents.map((event, index) => {
                   const canAnalyze = !event.isAIGenerated && !event.isAnalyzed && !isPastEvent(event);
                   const canClick = canAnalyze || event.isAIGenerated || event.isAnalyzed;
@@ -811,8 +826,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                     onClick={() => canClick && handleAnalyzeEvent(event)}
                     title={getTitle()}
                     style={{ cursor: canClick ? 'pointer' : 'default' }}
-                  >
-                    <div className="event-badges">
+            >
+            <div className="event-badges">
                       {event.isAIGenerated && (
                         <span className="ai-badge" title="AI-generated event">🤖 AI</span>
                       )}
@@ -829,7 +844,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                       >
                         🗑️
                       </button>
-                    </div>
+            </div>
                     <h3 className="event-title">{event.title}</h3>
                     <div className="event-card-body">
                       <p className="event-time">
@@ -845,7 +860,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                         <p className="event-description">
                           {(() => {
                             // Check if this is an AI-generated task with an original event reference
-                            if (event.isAIGenerated || event.isChecklistEvent) {
+                            if (event.isAIGenerated) {
                               // Parse description to remove the first line about the original event
                               const matchQuoted = event.description.match(/AI-generated preparation task for "(.+?)"\.\n\n/);
                               const matchEventId = event.description.match(/AI-generated preparation task for event ID .+?\.\n\n/);
@@ -886,14 +901,14 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                             <span className="weather-icon">🌤️</span>
                             <span className="weather-temp">{weatherData[event.id].temperature}°C</span>
                             <span className="weather-desc">{weatherData[event.id].description}</span>
-                          </div>
+            </div>
                           {weatherData[event.id].suggestions && weatherData[event.id].suggestions.length > 0 && (
                             <div className="weather-suggestion">
                               {weatherData[event.id].suggestions[0]}
-                            </div>
-                          )}
-                        </div>
-                      )}
+              </div>
+            )}
+              </div>
+            )}
                     </div>
                   </div>
                   );
@@ -914,7 +929,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                 ‹
               </button>
               <h3>{getMonthYearLabel()}</h3>
-              <button
+              <button 
                 className="month-nav-btn"
                 onClick={handleNextMonth}
                 aria-label="Next month"
@@ -958,7 +973,7 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                           return (
                           <div
                             key={getEventIdentifier(event) || `${event.title}-${eventIndex}`}
-                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEventId && selectedEventId === getEventIdentifier(event) ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item' : ''} ${event.isChecklistEvent || event.isGeneratedEvent ? 'checklist-event' : ''}`}
+                            className={`calendar-event-item ${getEventTypeClass(event.type)} ${getEventColorClassSync(event)} ${event.isRecurring ? 'recurring' : ''} ${isPastEvent(event) ? 'past-event' : ''} ${selectedEventId && selectedEventId === getEventIdentifier(event) ? 'selected' : ''} ${event.isAnalyzed ? 'analyzed' : ''} ${event.isAIGenerated ? 'ai-generated-item checklist-event' : ''}`}
                             onClick={() => canClick && handleAnalyzeEvent(event)}
                             title={getTitle()}
                             style={{ cursor: canClick ? 'pointer' : 'default' }}
@@ -968,11 +983,11 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
                             {event.isAIGenerated && (
                               <span className="ai-badge-small" title="AI-generated event">🤖</span>
                             )}
-                            {event.isAnalyzed && !event.isChecklistEvent && !event.isGeneratedEvent && (
+                            {event.isAnalyzed && !event.isAIGenerated && (
                               <span className="analyzed-badge-small" title="Event has been analyzed">✓</span>
                             )}
-                            {(event.isChecklistEvent || event.isGeneratedEvent) && (
-                              <span className="checklist-badge-small" title="Generated event from checklist (cannot be analyzed)">📋</span>
+                            {event.isAIGenerated && (
+                              <span className="checklist-badge-small" title="AI-generated checklist task">📋</span>
                             )}
                             {event.isRecurring && <span className="recurring-icon">🔄</span>}
                             <button
@@ -995,19 +1010,19 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
             </div>
           </div>
         </div>
-
+        
             {showAnalysis && resolvedSelectedEvent && (
               <div className="event-details-panel">
-                {(resolvedSelectedEvent.isAIGenerated || resolvedSelectedEvent.isChecklistEvent || resolvedSelectedEvent.isGeneratedEvent) ? (
+                {resolvedSelectedEvent.isAIGenerated ? (
                   <EventDetails
                     event={resolvedSelectedEvent}
                     onClose={closeAnalysis}
                   />
                 ) : (
-                  <EventAnalysis
+            <EventAnalysis 
                     event={resolvedSelectedEvent}
-                    onClose={closeAnalysis}
-                    onTasksAdded={handleTasksAdded}
+              onClose={closeAnalysis}
+              onTasksAdded={handleTasksAdded}
                     onEventAnalyzed={handleEventAnalyzed}
                   />
                 )}

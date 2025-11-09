@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { google } = require('googleapis');
 const { spawn } = require('child_process');
+const path = require('path');
 const { EventEmitter } = require('events');
 
 /**
@@ -253,37 +254,127 @@ class MCPMealPlanningClient extends EventEmitter {
       console.log(`🍽️  Generating meal plan for event: "${event.title}"`);
       console.log(`   User preferences: ${JSON.stringify(userPreferences)}`);
 
-      // Generate meal plan using Spoonacular API with user preferences
-      // The generateMealPlan function has default values, but we pass user preferences explicitly
-      const mealPlan = await this.generateMealPlan({
-        days: userPreferences.days,
-        targetCalories: userPreferences.targetCalories,
-        diet: userPreferences.diet,
-        exclude: userPreferences.exclude
+      const pythonResult = await this.runPythonMealPlanGenerator({
+        preferences: userPreferences
       });
-
-      // Format for document
-      const docContent = this.formatMealPlanForDoc(mealPlan, userPreferences);
-
-      // Create Google Doc
-      const doc = await this.createMealPlanDocument(
-        docContent,
-        userPreferences.eventDate,
-        tokens
-      );
-
-      console.log(`✅ Meal plan document created: ${doc.url}`);
 
       return {
         success: true,
-        mealPlan: mealPlan,
-        document: doc,
-        preferences: userPreferences
+        mealPlan: pythonResult.mealPlan,
+        document: pythonResult.document,
+        preferences: pythonResult.preferences,
+        formattedText: pythonResult.formattedText
       };
     } catch (error) {
       console.error('Error in generateMealPlanForEvent:', error);
       throw error;
     }
+  }
+
+  runPythonMealPlanGenerator({ preferences }) {
+    return new Promise((resolve, reject) => {
+      // Try to use the venv Python first, fall back to system Python
+      const venvPython = path.resolve(__dirname, '..', '..', 'mcp-servers', 'meal-planning', '.mealplan-venv', 'bin', 'python');
+      const fs = require('fs');
+      let pythonBin = process.env.PYTHON_MEAL_PLANNING_BIN || 'python3';
+      
+      // Check if venv exists and use it
+      if (fs.existsSync(venvPython)) {
+        pythonBin = venvPython;
+        console.log('🐍 [MCP] Using venv Python:', venvPython);
+      } else {
+        console.log('🐍 [MCP] Venv not found, using system Python:', pythonBin);
+      }
+      
+      const scriptPath = path.resolve(__dirname, '..', '..', 'mcp-servers', 'meal-planning', 'meal_planning_server.py');
+
+      const timeFrame = preferences.days === 1 ? 'day' : 'week';
+
+      const args = [
+        scriptPath,
+        '--time-frame', timeFrame,
+      ];
+
+      if (preferences.targetCalories) {
+        args.push('--target-calories', String(preferences.targetCalories));
+      }
+      if (preferences.diet) {
+        args.push('--diet', preferences.diet);
+      }
+      if (preferences.exclude) {
+        args.push('--exclude', preferences.exclude);
+      }
+      if (preferences.familySize) {
+        args.push('--family-size', String(preferences.familySize));
+      }
+      if (preferences.eventDate) {
+        args.push('--event-date', preferences.eventDate);
+      }
+
+      const child = spawn(pythonBin, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          MCP_RUN_MODE: 'cli',
+        }
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('error', (error) => {
+        let errorMessage = 'Failed to start Python meal planning process';
+        
+        if (error.code === 'ENOENT') {
+          errorMessage = 'Python not found. Please install Python 3 or set PYTHON_MEAL_PLANNING_BIN environment variable';
+        } else {
+          errorMessage = `Python process error: ${error.message}`;
+        }
+        
+        console.error(`[MCP Meal Planning] ${errorMessage}`);
+        reject(new Error(errorMessage));
+      });
+
+      child.on('close', (code) => {
+        if (code !== 0) {
+          let errorMessage = 'Spoonacular API or Python MCP server failed';
+          
+          if (stderr.includes('SPOONACULAR_API_KEY')) {
+            errorMessage = 'Spoonacular API key is missing or invalid';
+          } else if (stderr.includes('rate limit') || stderr.includes('429')) {
+            errorMessage = 'Spoonacular API rate limit exceeded';
+          } else if (stderr.includes('ModuleNotFoundError') || stderr.includes('ImportError')) {
+            errorMessage = 'Python dependencies missing (mcp or requests). Run: pip install mcp requests';
+          } else if (stderr.includes('Network') || stderr.includes('Connection')) {
+            errorMessage = 'Network error connecting to Spoonacular API';
+          } else if (stderr) {
+            errorMessage = `Meal planning error: ${stderr.substring(0, 200)}`;
+          } else {
+            errorMessage = `Python meal planner exited with code ${code}`;
+          }
+          
+          console.error(`[MCP Meal Planning] ${errorMessage}`);
+          return reject(new Error(errorMessage));
+        }
+
+        try {
+          const parsed = JSON.parse(stdout);
+          resolve(parsed);
+        } catch (parseError) {
+          const errorMsg = `Failed to parse meal planner output: ${parseError.message}`;
+          console.error(`[MCP Meal Planning] ${errorMsg}`);
+          reject(new Error(errorMsg));
+        }
+      });
+    });
   }
 }
 

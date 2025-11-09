@@ -15,6 +15,36 @@ const taskCache = require('./services/taskCache');
 
 const app = express();
 
+function shouldAttemptMealPlanDetection(event) {
+  if (!event) {
+    console.log('[meal-plan-detection] No event provided');
+    return false;
+  }
+  const text = `${event.title || ''} ${event.description || ''} ${event.type || ''}`.toLowerCase();
+  console.log('[meal-plan-detection] Checking event:', {
+    title: event.title,
+    type: event.type,
+    searchText: text,
+    hasPrep: text.includes('prep')
+  });
+  
+  if (!text.includes('prep')) {
+    console.log('[meal-plan-detection] ❌ No "prep" keyword found');
+    return false;
+  }
+  
+  const mealKeywords = ['meal', 'lunch', 'dinner', 'breakfast', 'snack'];
+  const foundKeyword = mealKeywords.find(keyword => text.includes(keyword));
+  
+  if (foundKeyword) {
+    console.log('[meal-plan-detection] ✅ Meal prep event detected! Keyword:', foundKeyword);
+    return true;
+  }
+  
+  console.log('[meal-plan-detection] ❌ No meal keywords found. Checked:', mealKeywords);
+  return false;
+}
+
 // Initialize the event analyzer
 let eventAnalyzer;
 try {
@@ -25,6 +55,7 @@ try {
   console.log('💡 Set OPENAI_API_KEY environment variable to enable AI analysis');
 }
 const PORT = process.env.PORT || 5001;
+const ANALYSIS_TIMEOUT_MS = parseInt(process.env.EVENT_ANALYSIS_TIMEOUT_MS || '35000', 10);
 
 /**
  * Ensure the analysis payload includes up-to-date weather information.
@@ -137,8 +168,7 @@ async function getLinkedTasksForEvent(eventId, req, options = {}) {
 
         (response.data.items || []).forEach(event => {
           const originalEventId = event.extendedProperties?.private?.originalEventId;
-          const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true' ||
-                               event.extendedProperties?.private?.isChecklistEvent === 'true';
+          const isAIGenerated = event.extendedProperties?.private?.isAIGenerated === 'true';
 
           if (originalEventId === eventId && isAIGenerated) {
             linkedTasks.push({
@@ -154,8 +184,7 @@ async function getLinkedTasksForEvent(eventId, req, options = {}) {
               originalEventId: originalEventId,
               originalEventTitle: event.extendedProperties?.private?.originalEventTitle || null,
               source: 'google',
-              isAIGenerated: true,
-              isChecklistEvent: true
+              isAIGenerated: true
             });
           }
         });
@@ -199,119 +228,165 @@ app.use(session({
   }
 }));
 
-// Mock calendar events data (with analysis tracking)
-let mockCalendarEvents = [
+// Helper function to generate dates relative to today
+function getRelativeDate(daysFromToday, hour = 9, minute = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromToday);
+  date.setHours(hour, minute, 0, 0);
+  return date.toISOString();
+}
+
+// Mock calendar events template (dates will be generated dynamically)
+const mockEventsTemplate = [
   {
     id: '1',
     title: 'Business Trip to New York',
     type: 'travel',
-    date: '2025-10-05T09:00:00Z',
-    endDate: '2025-10-08T18:00:00Z',
+    daysFromToday: 5,
+    startHour: 9,
+    startMinute: 0,
+    durationDays: 3,
+    endHour: 18,
+    endMinute: 0,
     description: 'Client meetings and conference attendance',
-    location: 'New York, NY',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'New York, NY'
   },
   {
     id: '2',
     title: 'Rock Concert - The Electric Blues',
     type: 'concert',
-    date: '2025-10-12T20:00:00Z',
-    endDate: '2025-10-12T23:00:00Z',
+    daysFromToday: 12,
+    startHour: 20,
+    startMinute: 0,
+    durationDays: 0,
+    endHour: 23,
+    endMinute: 0,
     description: 'Live performance at Madison Square Garden',
-    location: 'Madison Square Garden, NY',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Madison Square Garden, NY'
   },
   {
     id: '3',
     title: 'Band Practice Session',
     type: 'band practice',
-    date: '2025-10-03T19:00:00Z',
-    endDate: '2025-10-03T22:00:00Z',
+    daysFromToday: 3,
+    startHour: 19,
+    startMinute: 0,
+    durationDays: 0,
+    endHour: 22,
+    endMinute: 0,
     description: 'Weekly practice for upcoming gig',
-    location: 'Music Studio B, Downtown',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Music Studio B, Downtown'
   },
   {
     id: '4',
     title: 'Airport Pickup - Sarah',
     type: 'pickup',
-    date: '2025-10-07T14:30:00Z',
-    endDate: '2025-10-07T16:00:00Z',
+    daysFromToday: 7,
+    startHour: 14,
+    startMinute: 30,
+    durationDays: 0,
+    endHour: 16,
+    endMinute: 0,
     description: 'Pick up Sarah from JFK Airport',
-    location: 'JFK Airport Terminal 4',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'JFK Airport Terminal 4'
   },
   {
     id: '5',
     title: 'Weekend Trip to Mountains',
     type: 'travel',
-    date: '2025-10-14T08:00:00Z',
-    endDate: '2025-10-16T20:00:00Z',
+    daysFromToday: 14,
+    startHour: 8,
+    startMinute: 0,
+    durationDays: 2,
+    endHour: 20,
+    endMinute: 0,
     description: 'Hiking and camping adventure',
-    location: 'Rocky Mountain National Park',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Rocky Mountain National Park'
   },
   {
     id: '6',
     title: 'Jazz Concert - Blue Note Quartet',
     type: 'concert',
-    date: '2025-10-20T19:30:00Z',
-    endDate: '2025-10-20T22:30:00Z',
+    daysFromToday: 20,
+    startHour: 19,
+    startMinute: 30,
+    durationDays: 0,
+    endHour: 22,
+    endMinute: 30,
     description: 'Intimate jazz performance',
-    location: 'Blue Note Jazz Club',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Blue Note Jazz Club'
   },
   {
     id: '7',
     title: 'Band Practice - New Songs',
     type: 'band practice',
-    date: '2025-10-10T18:00:00Z',
-    endDate: '2025-10-10T21:00:00Z',
+    daysFromToday: 10,
+    startHour: 18,
+    startMinute: 0,
+    durationDays: 0,
+    endHour: 21,
+    endMinute: 0,
     description: 'Learning new repertoire for winter performances',
-    location: 'Community Center Room 3',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Community Center Room 3'
   },
   {
     id: '8',
     title: 'Family Pickup - Kids from School',
     type: 'pickup',
-    date: '2025-10-04T15:15:00Z',
-    endDate: '2025-10-04T16:00:00Z',
+    daysFromToday: 4,
+    startHour: 15,
+    startMinute: 15,
+    durationDays: 0,
+    endHour: 16,
+    endMinute: 0,
     description: 'Weekly pickup duty for soccer practice',
-    location: 'Riverside Elementary School',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Riverside Elementary School'
   },
   {
     id: '9',
     title: 'European Vacation',
     type: 'travel',
-    date: '2025-11-01T06:00:00Z',
-    endDate: '2025-11-15T22:00:00Z',
+    daysFromToday: 25,
+    startHour: 6,
+    startMinute: 0,
+    durationDays: 14,
+    endHour: 22,
+    endMinute: 0,
     description: 'Two-week tour of Italy and France',
-    location: 'Europe',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Europe'
   },
   {
     id: '10',
     title: 'Classical Concert - Symphony Orchestra',
     type: 'concert',
-    date: '2025-10-25T20:00:00Z',
-    endDate: '2025-10-25T22:30:00Z',
+    daysFromToday: 22,
+    startHour: 20,
+    startMinute: 0,
+    durationDays: 0,
+    endHour: 22,
+    endMinute: 30,
     description: 'Beethoven\'s 9th Symphony performance',
-    location: 'Lincoln Center',
-    isAnalyzed: false,
-    aiGenerated: false
+    location: 'Lincoln Center'
   }
 ];
+
+// Function to generate fresh events with current dates
+function generateMockEvents() {
+  return mockEventsTemplate.map(template => ({
+    id: template.id,
+    title: template.title,
+    type: template.type,
+    date: getRelativeDate(template.daysFromToday, template.startHour, template.startMinute),
+    endDate: getRelativeDate(template.daysFromToday + template.durationDays, template.endHour, template.endMinute),
+    description: template.description,
+    location: template.location,
+    isAnalyzed: false,
+    aiGenerated: false
+  }));
+  }
+
+// Initialize with fresh mock events
+let mockCalendarEvents = generateMockEvents();
 
 // Routes
 // Color classification endpoint (for LLM fallback if needed)
@@ -344,11 +419,43 @@ app.post('/api/calendar/color-classify', async (req, res) => {
 
 app.get('/api/calendar/events', (req, res) => {
   try {
+    // Regenerate mock events with fresh dates based on today
+    const baseEvents = generateMockEvents();
+    
+    // Preserve isAnalyzed and linkedTaskCount from existing events
+    const preservedStates = new Map();
+    mockCalendarEvents.forEach(event => {
+      if (event.isAnalyzed || event.linkedTaskCount) {
+        preservedStates.set(event.id || event.eventId, {
+          isAnalyzed: event.isAnalyzed,
+          analyzedAt: event.analyzedAt,
+          linkedTaskCount: event.linkedTaskCount
+        });
+      }
+    });
+    
+    // Apply preserved states to regenerated events
+    baseEvents.forEach(event => {
+      const preserved = preservedStates.get(event.id);
+      if (preserved) {
+        event.isAnalyzed = preserved.isAnalyzed;
+        event.analyzedAt = preserved.analyzedAt;
+        event.linkedTaskCount = preserved.linkedTaskCount;
+      }
+    });
+    
+    // Merge with any AI-generated events that were added
+    const aiGeneratedEvents = mockCalendarEvents.filter(e => e.isAIGenerated);
+    const freshEvents = [...baseEvents, ...aiGeneratedEvents];
+    
+    // Update the global mockCalendarEvents array
+    mockCalendarEvents = freshEvents;
+    
     // Simulate API delay
     setTimeout(() => {
       res.json({
         success: true,
-        events: mockCalendarEvents,
+        events: freshEvents,
         message: 'Calendar events retrieved successfully'
       });
     }, 500);
@@ -364,7 +471,7 @@ app.get('/api/calendar/events', (req, res) => {
 // Event analysis endpoint
 app.post('/api/analyze-event', async (req, res) => {
   try {
-    const { eventId, event } = req.body;
+    const { eventId, event, forceReanalyze = false } = req.body;
     
     if (!eventId && !event) {
       return res.status(400).json({
@@ -390,22 +497,57 @@ app.post('/api/analyze-event', async (req, res) => {
       }
     }
 
-    // Check if event is a checklist/generated event (these should never be analyzed)
-    if (eventToAnalyze.isChecklistEvent || eventToAnalyze.isGeneratedEvent) {
+    // Check if event is an AI-generated checklist task (these should never be analyzed)
+    if (eventToAnalyze.isAIGenerated) {
       return res.status(400).json({
         success: false,
-        message: 'Generated events (from checklist items) cannot be analyzed'
+        message: 'AI-generated checklist tasks cannot be analyzed'
       });
     }
 
     // Check if event has already been analyzed (from metadata)
     const eventIdentifier = eventToAnalyze.id || eventToAnalyze.eventId;
+    const shouldForceReanalyze = Boolean(forceReanalyze);
     const isAlreadyAnalyzed = eventToAnalyze.isAnalyzed || eventToAnalyze.extendedProperties?.private?.isAnalyzed === 'true';
     const cachedTasks = eventIdentifier ? taskCache.getRemainingTasks(eventIdentifier) : null;
 
-    if (isAlreadyAnalyzed) {
+    if (shouldForceReanalyze) {
+      let extendedProps = eventToAnalyze.extendedProperties;
+
+      if (extendedProps?.private) {
+        extendedProps = {
+          ...extendedProps,
+          private: {
+            ...extendedProps.private,
+            isAnalyzed: 'false'
+          }
+        };
+      } else if (extendedProps) {
+        extendedProps = {
+          ...extendedProps
+        };
+      }
+
+      eventToAnalyze = {
+        ...eventToAnalyze,
+        isAnalyzed: false,
+        extendedProperties: extendedProps
+      };
+
+      if (eventIdentifier) {
+        taskCache.clear(eventIdentifier);
+      }
+    }
+
+    if (isAlreadyAnalyzed && !shouldForceReanalyze) {
       const remainingTasks = Array.isArray(cachedTasks) ? cachedTasks : [];
       const linkedTasks = eventIdentifier ? await getLinkedTasksForEvent(eventIdentifier, req) : [];
+      console.log('📦 Cached analysis hit:', {
+        eventId: eventIdentifier,
+        remainingCount: remainingTasks.length,
+        linkedCount: linkedTasks.length
+      });
+ 
       const analysisPayload = {
         eventSummary: `Remaining checklist items for ${eventToAnalyze.title || 'this event'}`,
         preparationTasks: remainingTasks,
@@ -432,6 +574,8 @@ app.post('/api/analyze-event', async (req, res) => {
       });
     }
 
+    const shouldAttemptMealPlan = shouldAttemptMealPlanDetection(eventToAnalyze);
+
     // Check if event analyzer is available
     if (!eventAnalyzer) {
       return res.status(503).json({
@@ -444,14 +588,61 @@ app.post('/api/analyze-event', async (req, res) => {
 
     // Get Google OAuth tokens for document processing (if available)
     const tokens = req.session?.tokens || null;
-    
-    // Analyze the event using our AI agent (pass tokens for Google Docs processing)
-    analysis = await eventAnalyzer.analyzeEvent(eventToAnalyze, tokens);
+    const analysisStart = Date.now();
+    const analysisLogContext = {
+      eventId: eventIdentifier,
+      title: eventToAnalyze.title,
+      source: eventToAnalyze.source || 'mock',
+      shouldAttemptMealPlan,
+      forceReanalyze: shouldForceReanalyze
+    };
+
+    console.log('[analysis] server_start', {
+      ...analysisLogContext,
+      timeoutMs: ANALYSIS_TIMEOUT_MS
+    });
+
+    const timeoutError = new Error('analysis_timeout');
+    timeoutError.isAnalysisTimeout = true;
+    let analysisTimeoutId;
+
+    try {
+      const analysisPromise = eventAnalyzer.analyzeEvent(eventToAnalyze, tokens, { shouldAttemptMealPlan });
+      const timeoutPromise = new Promise((_, reject) => {
+        analysisTimeoutId = setTimeout(() => reject(timeoutError), ANALYSIS_TIMEOUT_MS);
+      });
+
+      analysis = await Promise.race([analysisPromise, timeoutPromise]);
+
+      console.log('[analysis] server_success', {
+        ...analysisLogContext,
+        durationMs: Date.now() - analysisStart
+      });
+    } catch (analysisError) {
+      console.error('[analysis] server_failure', {
+        ...analysisLogContext,
+        durationMs: Date.now() - analysisStart,
+        message: analysisError.message
+      });
+
+      if (analysisError.isAnalysisTimeout) {
+        return res.status(504).json({
+          success: false,
+          message: 'Event analysis timed out. Please try again.'
+        });
+      }
+      throw analysisError;
+    } finally {
+      clearTimeout(analysisTimeoutId);
+    }
 
     // Refresh weather data when needed
     await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
     if (eventIdentifier) {
-      taskCache.setRemainingTasks(eventIdentifier, analysis.preparationTasks || []);
+      const tasks = analysis.preparationTasks || [];
+      console.log(`💾 [TaskCache] Storing ${tasks.length} initial tasks for event:`, eventIdentifier);
+      console.log(`📋 [TaskCache] Tasks:`, tasks.map(t => t.task || t.title));
+      taskCache.setRemainingTasks(eventIdentifier, tasks);
     }
 
     const linkedTasks = eventIdentifier ? await getLinkedTasksForEvent(eventIdentifier, req) : [];
@@ -459,7 +650,19 @@ app.post('/api/analyze-event', async (req, res) => {
     analysis.remainingTasksOnly = false;
     analysis.remainingTaskCount = Array.isArray(analysis.preparationTasks) ? analysis.preparationTasks.length : 0;
     analysis.totalLinkedTasks = linkedTasks.length;
-    
+
+    if (Array.isArray(analysis.preparationTasks)) {
+      const sampleTasks = analysis.preparationTasks.slice(0, 3).map(task => ({
+        id: task.id,
+        description: task.description
+      }));
+      console.log('🧾 Preparation task sample:', sampleTasks);
+    }
+
+    if (analysis.mealPlan) {
+      console.log('🥘 Meal plan summary (document present?):', Boolean(analysis.mealPlan.document));
+    }
+ 
     // Don't mark the event as analyzed yet - wait until tasks are added
     // If this event is in Google Calendar, remove the isAnalyzed flag
     if (tokens && tokens.access_token && eventIdentifier && eventToAnalyze.source === 'google') {
@@ -485,7 +688,7 @@ app.post('/api/analyze-event', async (req, res) => {
         console.error('⚠️ Failed to remove analyzed flag from Google Calendar:', patchError.message);
       }
     }
-
+    
     res.json({
       success: true,
       event: { ...eventToAnalyze, isAnalyzed: false }, // Return as not analyzed until tasks are added
@@ -502,10 +705,99 @@ app.post('/api/analyze-event', async (req, res) => {
   }
 });
 
+// Generate meal plan with user preferences
+app.post('/api/generate-meal-plan', async (req, res) => {
+  try {
+    const { event, preferences } = req.body;
+    const tokens = req.session?.tokens;
+
+    if (!event) {
+      return res.status(400).json({
+        success: false,
+        message: 'Event data is required'
+      });
+    }
+
+    if (!preferences) {
+      return res.status(400).json({
+        success: false,
+        message: 'Meal plan preferences are required'
+      });
+    }
+
+    console.log('🍽️ [Generate Meal Plan] Request received:', {
+      eventTitle: event.title,
+      preferences: preferences,
+      hasTokens: !!tokens?.access_token
+    });
+
+    // Check if this is a meal prep event
+    const shouldAttemptMealPlan = shouldAttemptMealPlanDetection(event);
+    
+    if (!shouldAttemptMealPlan) {
+      return res.status(400).json({
+        success: false,
+        message: 'This event does not appear to be a meal prep event'
+      });
+    }
+
+    // Re-analyze the event with meal plan preferences
+    try {
+      const mealPlanPreferences = {
+        days: preferences.days || 7,
+        people: preferences.familySize || preferences.people || 2,
+        targetCalories: preferences.targetCalories || 2000,
+        diet: preferences.diet || 'balanced',
+        exclude: preferences.exclude || ''
+      };
+
+      console.log('🍽️ [Generate Meal Plan] Analyzing event with preferences:', mealPlanPreferences);
+
+      const analysis = await eventAnalyzer.analyzeEvent(event, tokens, {
+        shouldAttemptMealPlan: true,
+        mealPlanPreferences: mealPlanPreferences
+      });
+
+      console.log('🍽️ [Generate Meal Plan] Analysis complete:', {
+        hasMealPlan: !!analysis.mealPlan,
+        mealPlanSource: analysis.mealPlan?.source,
+        requiresPreferences: analysis.requiresMealPlanPreferences
+      });
+
+      if (analysis.mealPlan && (analysis.mealPlan.document || analysis.mealPlan.fallback)) {
+        return res.json({
+          success: true,
+          analysis: analysis,
+          message: 'Meal plan generated successfully'
+        });
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: analysis.mealPlan?.message || 'Failed to generate meal plan. Please try again.'
+        });
+      }
+    } catch (analysisError) {
+      console.error('🍽️ [Generate Meal Plan] Analysis error:', analysisError);
+      return res.status(500).json({
+        success: false,
+        message: `Failed to generate meal plan: ${analysisError.message}`
+      });
+    }
+  } catch (error) {
+    console.error('🍽️ [Generate Meal Plan] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate meal plan',
+      error: error.message
+    });
+  }
+});
+
 // Delete event endpoint
 app.delete('/api/calendar/events/:eventId', async (req, res) => {
   try {
-    const { eventId } = req.params;
+    const { eventId: rawEventId } = req.params;
+    const eventId = decodeURIComponent(rawEventId);
     const tokens = req.session?.tokens;
 
     if (!eventId) {
@@ -624,7 +916,7 @@ app.get('/api/event-status/:eventId', (req, res) => {
 app.post('/api/add-ai-tasks', async (req, res) => {
   try {
     const { selectedTasks, originalEventId } = req.body;
-
+    
     if (!selectedTasks || !Array.isArray(selectedTasks) || selectedTasks.length === 0) {
       return res.status(400).json({
         success: false,
@@ -696,9 +988,6 @@ app.post('/api/add-ai-tasks', async (req, res) => {
             },
             extendedProperties: {
               private: {
-                isChecklistEvent: 'true',
-                isGeneratedEvent: 'true',
-                aiGenerated: 'true',
                 isAIGenerated: 'true',
                 originalEventId: originalEventId,
                 originalEventTitle: originalEventTitle,
@@ -723,8 +1012,6 @@ app.post('/api/add-ai-tasks', async (req, res) => {
             description: googleEvent.description,
             location: null,
             isAnalyzed: true,
-            isChecklistEvent: true,
-            isGeneratedEvent: true,
             isAIGenerated: true,
             source: 'google',
             originalEventId: originalEventId,
@@ -740,7 +1027,45 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 
         // Mark the original event as analyzed now that tasks have been added
         try {
-          await calendar.events.patch({
+          console.log(`🔍 [Mark Analyzed] Attempting to mark event as analyzed:`, {
+            originalEventId,
+            eventIdLength: originalEventId?.length,
+            hasSpecialChars: /[_:]/.test(originalEventId || '')
+          });
+
+          // First, get the current event to check existing tasksCount
+          let currentTasksCount = 0;
+          let originalEventExists = false;
+          try {
+            const currentEvent = await calendar.events.get({
+              calendarId: 'primary',
+              eventId: originalEventId
+            });
+            originalEventExists = true;
+            const existingCount = currentEvent.data.extendedProperties?.private?.tasksCount;
+            currentTasksCount = existingCount ? parseInt(existingCount, 10) : 0;
+            console.log(`✅ [Mark Analyzed] Successfully fetched original event: "${currentEvent.data.summary}"`);
+          } catch (getError) {
+            console.error('❌ [Mark Analyzed] Could not get current event for tasksCount:', {
+              error: getError.message,
+              code: getError.code,
+              eventId: originalEventId
+            });
+          }
+
+          if (!originalEventExists) {
+            console.error('❌ [Mark Analyzed] Cannot mark event as analyzed - original event not found in Google Calendar');
+            throw new Error(`Original event ${originalEventId} not found in Google Calendar`);
+          }
+
+          const newTasksCount = currentTasksCount + selectedTasks.length;
+          console.log(`📊 [Mark Analyzed] Updating event ${originalEventId}:`, {
+            previousTasksCount: currentTasksCount,
+            newTasksScheduled: selectedTasks.length,
+            totalTasksCount: newTasksCount
+          });
+
+          const patchResult = await calendar.events.patch({
             calendarId: 'primary',
             eventId: originalEventId,
             resource: {
@@ -748,14 +1073,25 @@ app.post('/api/add-ai-tasks', async (req, res) => {
                 private: {
                   isAnalyzed: 'true',
                   analyzedAt: new Date().toISOString(),
-                  tasksCount: selectedTasks.length.toString()
+                  tasksCount: newTasksCount.toString()
                 }
               }
             }
           });
-          console.log(`✅ Marked original event as analyzed: ${originalEventId}`);
+          
+          console.log(`✅ [Mark Analyzed] Successfully marked event as analyzed:`, {
+            eventId: originalEventId,
+            eventTitle: patchResult.data.summary,
+            totalTasks: newTasksCount,
+            timestamp: new Date().toISOString()
+          });
         } catch (patchError) {
-          console.error('⚠️ Failed to mark original event as analyzed:', patchError.message);
+          console.error('❌ [Mark Analyzed] Failed to mark original event as analyzed:', {
+            error: patchError.message,
+            code: patchError.code,
+            eventId: originalEventId,
+            stack: patchError.stack
+          });
         }
 
       } catch (googleError) {
@@ -766,9 +1102,13 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 
     // If not created in Google Calendar, add to mock events
     if (!createdInGoogle) {
-      let nextId = Math.max(...mockCalendarEvents.map(e => parseInt(e.id))) + 1;
+      const numericIds = mockCalendarEvents
+        .map(e => parseInt(e.id, 10))
+        .filter(id => !Number.isNaN(id));
+      const highestId = numericIds.length > 0 ? Math.max(...numericIds) : 0;
+      let nextId = highestId + 1;
 
-      selectedTasks.forEach(task => {
+    selectedTasks.forEach(task => {
         // Ensure we have a valid task title
         const taskTitle = task.task || task.description?.split('.')[0] || task.description?.split(',')[0] || 'Preparation Task';
         
@@ -783,34 +1123,47 @@ app.post('/api/add-ai-tasks', async (req, res) => {
           console.warn('Could not find original event for mock:', err.message);
         }
         
-        const newEvent = {
-          id: nextId.toString(),
+      const newEvent = {
+        id: nextId.toString(),
           title: `📋 ${taskTitle}`,
-          type: 'ai-preparation',
-          date: task.suggestedDate,
-          endDate: null,
+        type: 'ai-preparation',
+        date: task.suggestedDate,
+        endDate: null,
           description: `AI-generated preparation task for "${originalEventTitleForMock}".\n\n${task.description || ''}\n\nEstimated time: ${task.estimatedTime}\nPriority: ${task.priority}\nCategory: ${task.category}`,
-          location: null,
+        location: null,
           isAnalyzed: true,
-          isChecklistEvent: true,
-          isGeneratedEvent: true,
           isAIGenerated: true,
-          originalEventId: originalEventId,
+        originalEventId: originalEventId,
           originalEventTitle: originalEventTitleForMock,
-          taskId: task.id,
-          priority: task.priority,
-          category: task.category,
-          estimatedTime: task.estimatedTime
-        };
+        taskId: task.id,
+        priority: task.priority,
+        category: task.category,
+        estimatedTime: task.estimatedTime
+      };
 
-        mockCalendarEvents.push(newEvent);
-        addedEvents.push(newEvent);
-        nextId++;
-      });
+      mockCalendarEvents.push(newEvent);
+      addedEvents.push(newEvent);
+      nextId++;
+    });
     }
 
     if (originalEventId) {
+      console.log(`✅ [TaskCache] Marking ${selectedTasks.length} tasks as completed for event:`, originalEventId);
+      console.log(`📋 [TaskCache] Tasks being marked:`, selectedTasks.map(t => t.task || t.title));
       taskCache.markTasksCompleted(originalEventId, selectedTasks);
+      
+      const remaining = taskCache.getRemainingTasks(originalEventId) || [];
+      console.log(`📋 [TaskCache] After marking, remaining tasks:`, {
+        count: remaining.length,
+        tasks: remaining.map(t => t.task || t.title)
+      });
+
+      const mockEvent = mockCalendarEvents.find(event => (event.id || event.eventId) === originalEventId);
+      if (mockEvent) {
+        mockEvent.isAnalyzed = true;
+        mockEvent.analyzedAt = new Date().toISOString();
+        mockEvent.linkedTaskCount = (mockEvent.linkedTaskCount || 0) + selectedTasks.length;
+      }
     }
 
     res.json({
@@ -871,6 +1224,10 @@ app.post('/api/get-remaining-tasks', (req, res) => {
     }
 
     const remainingTasks = taskCache.getRemainingTasks(eventId) || [];
+    console.log(`📋 [TaskCache] Get remaining tasks for ${eventId}:`, {
+      count: remainingTasks.length,
+      tasks: remainingTasks.map(t => t.task || t.title)
+    });
 
     res.json({
       success: true,

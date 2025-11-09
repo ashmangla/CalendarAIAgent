@@ -366,11 +366,14 @@
 }
 
 .linked-task-card {
-  background: white;
-  border: 1px solid #dbeafe;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
   padding: 0.75rem;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  opacity: 0.85;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .linked-task-header {
@@ -382,7 +385,7 @@
 
 .linked-task-title {
   font-weight: 600;
-  color: #1e293b;
+  color: #64748b;
   font-size: 0.8125rem;
 }
 
@@ -478,6 +481,8 @@
   padding: 6px;
   background: #f8f9fa;
   border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .task-checkbox {
@@ -586,11 +591,16 @@
   color: #667eea;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.625rem;
   cursor: pointer;
   transition: all 0.2s ease;
   margin-left: auto;
   flex-shrink: 0;
+  font-weight: 600;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .edit-task-btn:hover {
@@ -1128,40 +1138,40 @@
   .analysis-overlay {
     padding: 1rem;
   }
-
+  
   .analysis-modal {
     max-height: 95vh;
   }
-
+  
   .analysis-header {
     padding: 1.25rem 1.5rem;
   }
-
+  
   .analysis-header h2 {
     font-size: 1.25rem;
   }
-
+  
   .analysis-content {
     padding: 1rem;
     overflow-x: hidden;
   }
-
+  
   .tasks-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
   }
-
+  
   .event-meta {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
   }
-
+  
   .action-buttons {
     flex-direction: column;
     gap: 0.75rem;
   }
-
+  
   .add-tasks-btn,
   .reanalyze-btn {
     min-width: auto;
@@ -1190,37 +1200,37 @@
   .analysis-container {
     margin-top: 0;
   }
-
+  
   .analysis-header {
     padding: 0.75rem;
   }
-
+  
   .analysis-header h3 {
     font-size: 0.75rem;
   }
-
+  
   .close-btn {
     width: 1.25rem;
     height: 1.25rem;
     font-size: 0.6875rem;
   }
-
+  
   .analysis-content {
     padding: 0.75rem;
   }
-
+  
   .task-card {
     padding: 0.625rem;
   }
-
+  
   .event-info {
     padding: 0.75rem;
   }
-
+  
   .analysis-summary {
     padding: 0.75rem;
   }
-
+  
   .task-card {
     padding: 1rem;
   }

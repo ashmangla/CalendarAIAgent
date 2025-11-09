@@ -165,8 +165,7 @@ router.post('/events', async (req, res) => {
         let title = event.summary || 'Untitled Event';
         
         // If title starts with 📋 but is just the emoji or placeholder, extract from description
-        if ((event.extendedProperties?.private?.isChecklistEvent === 'true' || 
-             event.extendedProperties?.private?.isGeneratedEvent === 'true') &&
+        if (event.extendedProperties?.private?.isAIGenerated === 'true' &&
             (title === '📋' || title === '📋 ' || title.includes('Prep:') || title.includes('Prep for'))) {
           // Try to extract task title from description
           const descMatch = event.description?.match(/^📋\s*(.+?)(?:\n|$)/);
@@ -214,10 +213,6 @@ router.post('/events', async (req, res) => {
         // Check if this event has been analyzed
         const isAnalyzed = event.extendedProperties?.private?.isAnalyzed === 'true';
 
-        // Check if this is a checklist/generated event
-        const isChecklistEvent = event.extendedProperties?.private?.isChecklistEvent === 'true';
-        const isGeneratedEvent = event.extendedProperties?.private?.isGeneratedEvent === 'true';
-
         // Debug logging for AI-generated events
         if (isAIGenerated) {
           console.log(`🤖 Found AI-generated event: ${title} (Extended props: ${JSON.stringify(event.extendedProperties)})`);
@@ -226,6 +221,19 @@ router.post('/events', async (req, res) => {
         // Debug logging for analyzed events
         if (isAnalyzed) {
           console.log(`✓ Found analyzed event: ${title}`);
+        }
+
+        // Get linkedTaskCount from extendedProperties
+        const linkedTaskCount = event.extendedProperties?.private?.tasksCount 
+          ? parseInt(event.extendedProperties.private.tasksCount, 10) 
+          : 0;
+
+        if (isAnalyzed || linkedTaskCount > 0) {
+          console.log(`📊 [Google Calendar Event] ${title}:`, {
+            isAnalyzed,
+            linkedTaskCount,
+            extendedProps: event.extendedProperties?.private
+          });
         }
 
         return {
@@ -238,8 +246,7 @@ router.post('/events', async (req, res) => {
           location: event.location || '',
           isAnalyzed: isAnalyzed,
           isAIGenerated: isAIGenerated,
-          isChecklistEvent: isChecklistEvent,
-          isGeneratedEvent: isGeneratedEvent,
+          linkedTaskCount: linkedTaskCount,
           originalEventId: event.extendedProperties?.private?.originalEventId,
           originalEventTitle: event.extendedProperties?.private?.originalEventTitle,
           source: 'google',

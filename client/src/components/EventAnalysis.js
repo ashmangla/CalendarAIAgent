@@ -1,7 +1,37 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import './EventAnalysis.css';
 import UberBookingModal from './UberBookingModal';
+
+const sessionAnalysisCache = new Map();
+
+const extractGoogleDocUrls = (text = '') => {
+  if (!text) {
+    return [];
+  }
+  const pattern = /https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/g;
+  const urls = [];
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    urls.push({
+      fullUrl: match[0],
+      docId: match[1]
+    });
+  }
+  return urls;
+};
+
+const cloneAnalysis = (analysis) => {
+  if (!analysis) return null;
+  try {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(analysis);
+    }
+  } catch (error) {
+    // structuredClone not available
+  }
+  return JSON.parse(JSON.stringify(analysis));
+};
 
 const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [analysis, setAnalysis] = useState(null);
@@ -13,8 +43,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   const [editedTasks, setEditedTasks] = useState({}); // Store edited versions of tasks
   const [editingTaskId, setEditingTaskId] = useState(null); // Track which task is being edited
   const [isAlreadyAnalyzed, setIsAlreadyAnalyzed] = useState(false);
-  const [isChecklistEvent, setIsChecklistEvent] = useState(false);
-  const [isGeneratedEvent, setIsGeneratedEvent] = useState(false);
+  const [hasScheduledTasks, setHasScheduledTasks] = useState(false);
   const [showDescriptionEditor, setShowDescriptionEditor] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
   const [detectedDocUrls, setDetectedDocUrls] = useState([]);
@@ -27,10 +56,192 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     exclude: ''
   });
   const [generatingMealPlan, setGeneratingMealPlan] = useState(false);
+  const previousEventIdRef = useRef(null);
+  const eventId = event?.id || event?.eventId;
+  const hydratingRef = useRef(false);
+  function normalizeAnalysisPayload(rawAnalysis) {
+    if (!rawAnalysis) return null;
+
+    const linked = Array.isArray(rawAnalysis.linkedTasks)
+      ? rawAnalysis.linkedTasks
+      : [];
+    const linkedIds = new Set(
+      linked.map((task) => getTaskIdentifier(task)).filter(Boolean)
+    );
+
+    const remaining = Array.isArray(rawAnalysis.preparationTasks)
+      ? rawAnalysis.preparationTasks.filter(
+          (task) => !linkedIds.has(getTaskIdentifier(task))
+        )
+      : [];
+
+    return {
+      ...rawAnalysis,
+      linkedTasks: linked,
+      preparationTasks: remaining,
+      remainingTaskCount: remaining.length,
+      totalLinkedTasks: linked.length,
+      remainingTasksOnly: rawAnalysis.remainingTasksOnly ?? linked.length > 0,
+      allTasksScheduled: remaining.length === 0 && linked.length > 0
+    };
+  }
 
   useEffect(() => {
     setSelectedTasks([]);
   }, [analysis]);
+
+  useEffect(() => {
+    if (!event) {
+      setAnalysis(null);
+      setIsAlreadyAnalyzed(false);
+      setHasScheduledTasks(false);
+      setError(null);
+      setEditedDescription('');
+      setDetectedDocUrls([]);
+      setShowDescriptionEditor(false);
+      previousEventIdRef.current = null;
+      return;
+    }
+
+    const newEventId = eventId;
+    const cachedEntry = newEventId ? sessionAnalysisCache.get(newEventId) : null;
+
+    setError(null);
+    setShowMealPlanModal(false);
+    setEditingTaskId(null);
+    setSelectedTasks([]);
+    setShowDescriptionEditor(false);
+
+    if (cachedEntry) {
+      const clonedAnalysis = cloneAnalysis(cachedEntry.analysis);
+      const sanitized = normalizeAnalysisPayload(clonedAnalysis);
+      sessionAnalysisCache.set(newEventId, {
+        ...cachedEntry,
+        analysis: cloneAnalysis(sanitized)
+      });
+      const isFinalized = Boolean(cachedEntry.finalized);
+      setAnalysis(sanitized);
+      setIsAlreadyAnalyzed(Boolean(sanitized) || isFinalized);
+      setHasScheduledTasks(Boolean(cachedEntry.hasScheduledTasks || isFinalized));
+
+      const restoredDescription = cachedEntry.descriptionOverride ?? event.description ?? '';
+      setEditedDescription(restoredDescription);
+      setDetectedDocUrls(extractGoogleDocUrls(restoredDescription));
+    } else {
+      setAnalysis(null);
+      setIsAlreadyAnalyzed(false);
+      setHasScheduledTasks(false);
+
+      const initialDescription = event.description || '';
+      setEditedDescription(initialDescription);
+      setDetectedDocUrls(extractGoogleDocUrls(initialDescription));
+    }
+
+    previousEventIdRef.current = newEventId;
+  }, [event, eventId]);
+
+  useEffect(() => {
+    console.log('🔍 [Hydration Check]', {
+      eventId,
+      eventTitle: event?.title,
+      hasAnalysis: !!analysis,
+      hasCachedAnalysis: !!sessionAnalysisCache.get(eventId || ''),
+      eventIsAnalyzed: event?.isAnalyzed,
+      eventLinkedTaskCount: event?.linkedTaskCount,
+      eventIsAIGenerated: event?.isAIGenerated,
+      hydratingRefCurrent: hydratingRef.current
+    });
+
+    const shouldHydrateFromServer =
+      !analysis &&
+      !sessionAnalysisCache.get(eventId || '') &&
+      event &&
+      (event.isAnalyzed || (event.linkedTaskCount && event.linkedTaskCount > 0)) &&
+      !event.isAIGenerated &&
+      eventId &&
+      !hydratingRef.current;
+
+    console.log('🔍 [Hydration Decision]', {
+      shouldHydrate: shouldHydrateFromServer,
+      reason: !shouldHydrateFromServer ? 
+        (!analysis ? 'has analysis' : 
+         !sessionAnalysisCache.get(eventId || '') ? 'has cached analysis' :
+         !event ? 'no event' :
+         !(event.isAnalyzed || (event.linkedTaskCount && event.linkedTaskCount > 0)) ? 'not analyzed or no linked tasks' :
+         event.isAIGenerated ? 'is AI generated' :
+         !eventId ? 'no eventId' :
+         hydratingRef.current ? 'already hydrating' : 'unknown') : 'will hydrate'
+    });
+
+    if (!shouldHydrateFromServer) {
+      return;
+    }
+
+    hydratingRef.current = true;
+    console.log('🚀 [Starting Hydration] for event:', eventId);
+
+    const hydrate = async () => {
+      try {
+        setLoading(true);
+        console.log('📡 [Fetching] linked and remaining tasks for:', eventId);
+        const [linkedRes, remainingRes] = await Promise.all([
+          axios.post('/api/get-linked-tasks', { eventId }),
+          axios.post('/api/get-remaining-tasks', { eventId })
+        ]);
+
+        const linked = Array.isArray(linkedRes.data?.linkedTasks)
+          ? linkedRes.data.linkedTasks
+          : [];
+        const remaining = Array.isArray(remainingRes.data?.tasks)
+          ? remainingRes.data.tasks
+          : [];
+        
+        console.log('✅ [Hydration Data]', {
+          linkedCount: linked.length,
+          remainingCount: remaining.length,
+          linked: linked.map(t => ({ title: t.title, date: t.date })),
+          remaining: remaining.map(t => ({ task: t.task, category: t.category }))
+        });
+
+        const hydratedAnalysis = normalizeAnalysisPayload({
+          eventSummary: `Remaining checklist items for ${event.title || 'this event'}`,
+          preparationTasks: remaining,
+          timeline: { timeframe: [] },
+          tips: [],
+          estimatedPrepTime:
+            remaining.length > 0 ? `${remaining.length} task${remaining.length > 1 ? 's' : ''} remaining` : '0 minutes remaining',
+          requiresMealPlanPreferences: false,
+          remainingTasksOnly: true,
+          allTasksScheduled: remaining.length === 0,
+          linkedTasks: linked,
+          totalLinkedTasks: linked.length,
+          remainingTaskCount: remaining.length
+        });
+
+        sessionAnalysisCache.set(eventId, {
+          analysis: cloneAnalysis(hydratedAnalysis),
+          hasScheduledTasks: linked.length > 0,
+          descriptionOverride: event.description || '',
+          finalized: linked.length > 0
+        });
+
+        setAnalysis(hydratedAnalysis);
+        setIsAlreadyAnalyzed(true);
+        setHasScheduledTasks(linked.length > 0);
+        setEditedDescription(event.description || '');
+        setDetectedDocUrls(extractGoogleDocUrls(event.description || ''));
+        setEditedTasks({});
+      } catch (err) {
+        console.error('Failed to hydrate analyzed event:', err);
+        setError('Unable to load existing checklist. Please try again.');
+      } finally {
+        setLoading(false);
+        hydratingRef.current = false;
+      }
+    };
+
+    hydrate();
+  }, [event, eventId]);
 
   const preparationTasks = Array.isArray(analysis?.preparationTasks)
     ? analysis.preparationTasks
@@ -40,6 +251,33 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     ? analysis.linkedTasks
     : [];
   const hasLinkedTasks = linkedTasks.length > 0;
+
+function getTaskIdentifier(task) {
+  if (!task) return '';
+  if (task.id) return `id:${task.id}`;
+  if (task.task) return `task:${task.task.toString().trim().toLowerCase()}`;
+  if (task.title) return `title:${task.title.toString().trim().toLowerCase()}`;
+  const parts = [
+    task.category || '',
+    task.description || '',
+    task.estimatedTime || ''
+  ]
+    .map((part) => part.toString().trim().toLowerCase())
+    .join('|');
+  return `fallback:${parts}`;
+}
+
+  const findTaskByIdentifier = (tasks, identifier) => {
+    if (!identifier) {
+      return { task: undefined, index: -1 };
+    }
+    for (let i = 0; i < tasks.length; i += 1) {
+      if (getTaskIdentifier(tasks[i]) === identifier) {
+        return { task: tasks[i], index: i };
+      }
+    }
+    return { task: undefined, index: -1 };
+  };
   const formatLinkedTaskDate = (dateStr) => {
     if (!dateStr) {
       return 'Date TBD';
@@ -64,37 +302,56 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
     setAddingTasks(true);
     try {
+      const tasksPayload = selectedTasks.map(({ __taskKey, ...rest }) => rest);
       const response = await axios.post('/api/add-ai-tasks', {
-        selectedTasks: selectedTasks,
+        selectedTasks: tasksPayload,
         originalEventId: event.id
       });
 
       const addedEvents = response.data.addedEvents || [];
       if (response.data.success) {
         setIsAlreadyAnalyzed(true);
+        setHasScheduledTasks(true);
+        setSelectedTasks([]);
+        
+        // Notify parent to refresh events and mark as analyzed
+        if (onEventAnalyzed && eventId) {
+          onEventAnalyzed(eventId);
+        }
         onTasksAdded && onTasksAdded(addedEvents);
-
+        
+        // Instead of clearing analysis completely, update it with the new linked tasks
+        // This keeps hasLinkedTasks in sync with hasScheduledTasks
         setAnalysis(prev => {
           if (!prev) return prev;
-
-          const selectedIds = new Set(selectedTasks.map(task => task.id || task.task));
-          const remainingTasks = (prev.preparationTasks || []).filter(task => {
-            const identifier = task.id || task.task;
+          
+          const selectedIds = new Set(
+            selectedTasks
+              .map(task => task.__taskKey || getTaskIdentifier(task))
+              .filter(Boolean)
+          );
+          const remainingTasks = (prev.preparationTasks || []).filter((task) => {
+            const identifier = getTaskIdentifier(task);
             return !selectedIds.has(identifier);
           });
-
+          
           const updatedLinked = [...(prev.linkedTasks || []), ...addedEvents];
-
-          return {
+          
+          return normalizeAnalysisPayload({
             ...prev,
             preparationTasks: remainingTasks,
             linkedTasks: updatedLinked,
             remainingTaskCount: remainingTasks.length,
-            totalLinkedTasks: updatedLinked.length
-          };
+            totalLinkedTasks: updatedLinked.length,
+            allTasksScheduled: remainingTasks.length === 0
+          });
         });
-
-        setSelectedTasks([]);
+        
+        // Clear cache so next time it hydrates fresh from server
+        if (eventId) {
+          sessionAnalysisCache.delete(eventId);
+        }
+        hydratingRef.current = false; // Allow re-hydration on next open
       } else {
         setError('Failed to add tasks to calendar');
       }
@@ -107,48 +364,109 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   };
   
   const analyzeEvent = useCallback(async () => {
+    if (!event || !eventId) {
+      setError('Event is missing an identifier. Please refresh and try again.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    console.log('[analysis] request_start', {
+      eventId,
+      title: event.title
+    });
     
+    const source = axios.CancelToken.source();
+    const timeoutId = setTimeout(() => {
+      source.cancel(new Error('Event analysis timed out. Please try again.'));
+    }, 30000);
+
     try {
+      const allowManualReanalyze = isAlreadyAnalyzed && !hasScheduledTasks;
+
       // Use edited description if available, otherwise use original
       const eventToAnalyze = {
         ...event,
         description: editedDescription || event.description || ''
       };
+
+      if (allowManualReanalyze) {
+        eventToAnalyze.isAnalyzed = false;
+        if (eventToAnalyze.extendedProperties?.private) {
+          eventToAnalyze.extendedProperties = {
+            ...eventToAnalyze.extendedProperties,
+            private: {
+              ...eventToAnalyze.extendedProperties.private,
+              isAnalyzed: 'false'
+            }
+          };
+        }
+      }
       
-      const response = await axios.post('/api/analyze-event', {
-        event: eventToAnalyze // Pass the event with potentially updated description
-      });
+      const response = await axios.post(
+        '/api/analyze-event',
+        { event: eventToAnalyze, forceReanalyze: allowManualReanalyze },
+        { cancelToken: source.token }
+      );
       
       if (response.data.success) {
-        setAnalysis(response.data.analysis);
+        const normalizedAnalysis = normalizeAnalysisPayload(response.data.analysis);
+        const descriptionOverride = eventToAnalyze.description || '';
+        setAnalysis(normalizedAnalysis);
+        setEditedDescription(descriptionOverride);
+        setDetectedDocUrls(extractGoogleDocUrls(descriptionOverride));
+        sessionAnalysisCache.set(eventId, {
+          analysis: cloneAnalysis(normalizedAnalysis),
+          hasScheduledTasks: false,
+          descriptionOverride,
+          finalized: false
+        });
+        setHasScheduledTasks(false);
+        setIsAlreadyAnalyzed(true);
+        console.log('[analysis] request_success', {
+          eventId,
+          title: event.title
+        });
 
-        // Don't notify parent that event was analyzed yet
-        // Only notify after tasks are actually added to the calendar
       } else {
         setError(response.data.message || 'Failed to analyze event');
       }
     } catch (err) {
-      // Handle specific error cases
-      if (err.response?.data?.message) {
+      if (axios.isCancel(err)) {
+        const timeoutMessage = err.message || 'Event analysis timed out. Please try again.';
+        console.warn('[analysis] request_timeout', {
+          eventId,
+          title: event?.title,
+          message: timeoutMessage
+        });
+        setError(timeoutMessage);
+      } else if (err.response?.data?.message) {
         const errorMsg = err.response.data.message;
         setError(errorMsg);
         
         if (errorMsg.includes('already been analyzed')) {
           setIsAlreadyAnalyzed(true);
-        } else if (errorMsg.includes('Checklist events cannot') || errorMsg.includes('Generated events')) {
-          setIsChecklistEvent(true);
-          setIsGeneratedEvent(true);
         }
+        // Note: AI-generated events are now blocked at the server level
+        console.error('[analysis] request_failed', {
+          eventId,
+          title: event?.title,
+          message: errorMsg
+        });
       } else {
         setError('Error analyzing event. Please try again.');
+        console.error('[analysis] request_failed', {
+          eventId,
+          title: event?.title,
+          message: err?.message
+        });
       }
       console.error('Error:', err);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
-  }, [event, editedDescription]);
+  }, [event, eventId, editedDescription, onEventAnalyzed, isAlreadyAnalyzed, hasScheduledTasks]);
 
   // Generate meal plan with user preferences
   const handleGenerateMealPlan = async () => {
@@ -164,7 +482,18 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
       if (response.data.success) {
         // Update analysis with meal plan
-        setAnalysis(response.data.analysis);
+        const updatedAnalysis = normalizeAnalysisPayload(response.data.analysis);
+        setAnalysis(updatedAnalysis);
+        if (eventId) {
+          const existingEntry = sessionAnalysisCache.get(eventId) || {};
+          sessionAnalysisCache.set(eventId, {
+            ...existingEntry,
+            analysis: cloneAnalysis(updatedAnalysis),
+            hasScheduledTasks: hasScheduledTasks,
+            descriptionOverride: existingEntry.descriptionOverride ?? (editedDescription || event.description || ''),
+            finalized: existingEntry.finalized || hasScheduledTasks
+          });
+        }
         setShowMealPlanModal(false);
         // Show success message
       } else {
@@ -182,20 +511,6 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }
   };
 
-  // Check event status on mount
-  useEffect(() => {
-    if (event) {
-      setIsAlreadyAnalyzed(event.isAnalyzed || false);
-      setIsChecklistEvent(event.isChecklistEvent || false);
-      setIsGeneratedEvent(event.isGeneratedEvent || false);
-      
-      // If already analyzed, try to load cached analysis
-      if (event.isAnalyzed && !event.isChecklistEvent && !event.isGeneratedEvent) {
-        analyzeEvent(); // This will get from cache
-      }
-    }
-  }, [event, analyzeEvent]);
-
   // Check if meal plan preferences are needed after analysis
   useEffect(() => {
     if (analysis && analysis.requiresMealPlanPreferences) {
@@ -212,86 +527,82 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }
   };
 
-  const handleTaskSelection = (task, isSelected) => {
-    // Get the edited version if it exists, otherwise use original
-    const taskToAdd = editedTasks[task.id || task.task] || task;
-    
+  const handleTaskSelection = (task, _index, isSelected) => {
+    const taskKey = getTaskIdentifier(task);
+    const editedVersion = editedTasks[taskKey];
+    const taskToPersist = {
+      ...(editedVersion || task),
+      __taskKey: taskKey
+    };
+
     if (isSelected) {
-      setSelectedTasks(prev => [...prev, taskToAdd]);
+      setSelectedTasks(prev => {
+        if (prev.some(t => (t.__taskKey || getTaskIdentifier(t)) === taskKey)) {
+          return prev;
+        }
+        return [...prev, taskToPersist];
+      });
     } else {
-      setSelectedTasks(prev => prev.filter(t => (t.id || t.task) !== (task.id || task.task)));
+      setSelectedTasks(prev => prev.filter(t => (t.__taskKey || getTaskIdentifier(t)) !== taskKey));
     }
   };
 
-  const updateChecklistItem = (taskId, itemIndex, newValue) => {
-    const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
-    
+  const updateChecklistItem = (taskIdentifier, itemIndex, newValue) => {
+    if (!taskIdentifier) return;
+
+    const currentTask = editedTasks[taskIdentifier] || findTaskByIdentifier(preparationTasks, taskIdentifier).task;
     if (!currentTask) return;
-    
-    // Get checklist items
+
     const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
-    
-    // Update the specific item
     const updatedItems = [...checklistItems];
     updatedItems[itemIndex] = newValue;
-    
-    // Update edited task
+
     setEditedTasks(prev => ({
       ...prev,
-      [taskKey]: {
+      [taskIdentifier]: {
         ...currentTask,
         description: updatedItems.join(', ')
       }
     }));
   };
 
-  const addChecklistItem = (taskId, newItem = 'New item') => {
-    const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
-    
+  const addChecklistItem = (taskIdentifier, newItem = 'New item') => {
+    if (!taskIdentifier) return;
+
+    const currentTask = editedTasks[taskIdentifier] || findTaskByIdentifier(preparationTasks, taskIdentifier).task;
     if (!currentTask) return;
-    
-    // Get checklist items
+
     const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
-    
-    // Add new item
     const updatedItems = [...checklistItems, newItem];
-    
-    // Update edited task
+
     setEditedTasks(prev => ({
       ...prev,
-      [taskKey]: {
+      [taskIdentifier]: {
         ...currentTask,
         description: updatedItems.join(', ')
       }
     }));
   };
   
-  const addTransportationToChecklist = (taskId) => {
-    const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
-    
+  const addTransportationToChecklist = (taskIdentifier) => {
+    if (!taskIdentifier) return;
+
+    const currentTask = editedTasks[taskIdentifier] || findTaskByIdentifier(preparationTasks, taskIdentifier).task;
     if (!currentTask) return;
-    
-    // Get checklist items
+
     const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
-    
-    // Check if transportation item already exists
-    const hasTransportation = checklistItems.some(item => 
-      item.toLowerCase().includes('uber') || 
-      item.toLowerCase().includes('ride') || 
+    const hasTransportation = checklistItems.some(item =>
+      item.toLowerCase().includes('uber') ||
+      item.toLowerCase().includes('ride') ||
       item.toLowerCase().includes('transportation')
     );
-    
+
     if (!hasTransportation) {
-      // Add transportation item
       const updatedItems = [...checklistItems, 'Book Uber ride to event'];
-      
-      // Update edited task and mark as transportation task
+
       setEditedTasks(prev => ({
         ...prev,
-        [taskKey]: {
+        [taskIdentifier]: {
           ...currentTask,
           description: updatedItems.join(', '),
           category: 'Transportation'
@@ -300,65 +611,54 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }
   };
 
-  const removeChecklistItem = (taskId, itemIndex) => {
-    const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
-    
+  const removeChecklistItem = (taskIdentifier, itemIndex) => {
+    if (!taskIdentifier) return;
+
+    const currentTask = editedTasks[taskIdentifier] || findTaskByIdentifier(preparationTasks, taskIdentifier).task;
     if (!currentTask) return;
-    
-    // Get checklist items
+
     const checklistItems = currentTask.description ? currentTask.description.split(',').map(i => i.trim()) : [];
-    
-    // Remove the item
     const updatedItems = checklistItems.filter((_, idx) => idx !== itemIndex);
-    
-    // Update edited task
+
     setEditedTasks(prev => ({
       ...prev,
-      [taskKey]: {
+      [taskIdentifier]: {
         ...currentTask,
         description: updatedItems.join(', ')
       }
     }));
   };
 
-  const updateTaskDateTime = (taskId, newDate, newTime) => {
-    const taskKey = taskId || 'default';
-    const currentTask = editedTasks[taskKey] || preparationTasks.find(t => (t.id || t.task) === taskId);
-    
+  const updateTaskDateTime = (taskIdentifier, newDate, newTime) => {
+    if (!taskIdentifier) return;
+
+    const currentTask = editedTasks[taskIdentifier] || findTaskByIdentifier(preparationTasks, taskIdentifier).task;
     if (!currentTask) return;
-    
-    // If newDate provided, create a datetime with the time
+
     let updatedDate = currentTask.suggestedDate;
     if (newDate) {
       const dateObj = new Date(newDate);
       if (newTime) {
         const [hours, minutes] = newTime.split(':');
-        dateObj.setHours(parseInt(hours), parseInt(minutes));
+        dateObj.setHours(parseInt(hours, 10), parseInt(minutes, 10));
       }
       updatedDate = dateObj.toISOString();
     } else if (newTime && currentTask.suggestedDate) {
-      // Update time on existing date
       const dateObj = new Date(currentTask.suggestedDate);
       const [hours, minutes] = newTime.split(':');
-      dateObj.setHours(parseInt(hours), parseInt(minutes));
+      dateObj.setHours(parseInt(hours, 10), parseInt(minutes, 10));
       updatedDate = dateObj.toISOString();
     }
     
-    // Validate that the date/time is in the future
     const now = new Date();
     const suggestedDateTime = new Date(updatedDate);
-    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour buffer
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
     
-    // If the suggested date/time is in the past, adjust it to 1 hour from now
     if (suggestedDateTime <= oneHourFromNow) {
       const adjustedDate = new Date(oneHourFromNow);
-      // Preserve the time portion if it was valid, otherwise use 1 hour from now
       if (newTime && suggestedDateTime > now) {
-        // If only the time was adjusted and it's still in the past, use the adjusted time
         adjustedDate.setHours(suggestedDateTime.getHours(), suggestedDateTime.getMinutes());
         if (adjustedDate <= now) {
-          // Still in past, use 1 hour from now
           updatedDate = oneHourFromNow.toISOString();
         } else {
           updatedDate = adjustedDate.toISOString();
@@ -368,10 +668,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
       }
     }
     
-    // Update edited task with new date/time
     setEditedTasks(prev => ({
       ...prev,
-      [taskKey]: {
+      [taskIdentifier]: {
         ...currentTask,
         suggestedDate: updatedDate,
         suggestedTime: newTime || currentTask.suggestedTime || newTime
@@ -380,7 +679,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
   };
 
   const getTaskToDisplay = (task) => {
-    const taskKey = task.id || task.task;
+    const taskKey = getTaskIdentifier(task);
     return editedTasks[taskKey] || task;
   };
 
@@ -418,13 +717,17 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     }
   };
 
+  const buttonLabel = !isAlreadyAnalyzed
+    ? (loading ? 'Analyzing...' : '🧠 Generate Checklist')
+    : (loading ? 'Re-generating...' : '🔄 Re-generate checklist');
+  const descriptionToDisplay = editedDescription || event?.description || '';
+
   return (
     <div className="analysis-container">
       <div className="analysis-header">
         <h3>🤖 AI Event Analysis</h3>
         <button className="close-btn" onClick={onClose}>×</button>
       </div>
-      
       <div className="analysis-content">
           <div className="event-info">
             <h4>{event.title}</h4>
@@ -448,7 +751,8 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
             <div className="event-description-section">
               <div className="description-header">
                 <strong>Description:</strong>
-                {!isChecklistEvent && !isGeneratedEvent && (
+                {/* Only show edit button for original user events, hide once tasks are scheduled or if it's AI-generated */}
+                {!event.isAIGenerated && !hasScheduledTasks && (
                   <button
                     className="edit-description-btn"
                     onClick={() => setShowDescriptionEditor(!showDescriptionEditor)}
@@ -464,18 +768,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                     className="description-textarea"
                     value={editedDescription}
                     onChange={(e) => {
-                      setEditedDescription(e.target.value);
-                      // Auto-detect URLs in real-time
-                      const urlPattern = /https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/g;
-                      const urls = [];
-                      let match;
-                      while ((match = urlPattern.exec(e.target.value)) !== null) {
-                        urls.push({
-                          fullUrl: match[0],
-                          docId: match[1]
-                        });
-                      }
-                      setDetectedDocUrls(urls);
+                      const nextValue = e.target.value;
+                      setEditedDescription(nextValue);
+                      setDetectedDocUrls(extractGoogleDocUrls(nextValue));
                     }}
                     placeholder="Enter event description. Paste Google Docs/Sheets URLs here for AI-powered meeting preparation."
                     rows="4"
@@ -497,17 +792,8 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                     className="save-description-btn"
                     onClick={async () => {
                       // Detect URLs in the edited description
-                      const urlPattern = /https?:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/g;
-                      const urls = [];
-                      let match;
-                      while ((match = urlPattern.exec(editedDescription)) !== null) {
-                        urls.push({
-                          fullUrl: match[0],
-                          docId: match[1]
-                        });
-                      }
-                      setDetectedDocUrls(urls);
-                      
+                      setDetectedDocUrls(extractGoogleDocUrls(editedDescription));
+
                       // Close editor - description will be used when analyzing
                       setShowDescriptionEditor(false);
                       
@@ -520,9 +806,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                 </div>
               ) : (
                 <div className="event-description-display">
-                  {event.description ? (
+                  {descriptionToDisplay ? (
                     <>
-                      <p className="description-text">{event.description}</p>
+                      <p className="description-text">{descriptionToDisplay}</p>
                       {detectedDocUrls.length > 0 && (
                         <div className="detected-docs-inline">
                           <strong>📄 Google Docs detected:</strong>
@@ -544,9 +830,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
           {!analysis && !loading && !error && (
             <div className="analyze-prompt">
-              {isGeneratedEvent || isChecklistEvent ? (
+              {event.isAIGenerated ? (
                 <>
-                  <p className="info-message">ℹ️ This is a generated event created from an analyzed event's checklist. Generated events cannot be analyzed.</p>
+                  <p className="info-message">ℹ️ This is an AI-generated checklist task. It cannot be analyzed further.</p>
                 </>
               ) : isAlreadyAnalyzed ? (
                 <>
@@ -554,14 +840,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                 </>
               ) : (
                 <>
-                  <p>Get AI-powered suggestions for preparing for this event!</p>
-                  <button
-                    className="analyze-btn"
-                    onClick={analyzeEvent}
-                    disabled={loading}
-                  >
-                    {loading ? 'Analyzing...' : '🧠 Generate Checklist'}
-                  </button>
+                  <p>Get AI-powered suggestions for preparing for this event using the action button below.</p>
                 </>
               )}
             </div>
@@ -577,7 +856,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               {error && (
             <div className="error-analysis">
               <p>{error}</p>
-              {!isChecklistEvent && !isGeneratedEvent && !isAlreadyAnalyzed && (
+              {!event.isAIGenerated && !isAlreadyAnalyzed && (
                 <button className="retry-btn" onClick={analyzeEvent}>Try Again</button>
               )}
             </div>
@@ -601,28 +880,43 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
               </div>
 
               {analysis.mealPlan && (
-                <div className="meal-plan-info" style={{ marginBottom: '20px', padding: '15px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac' }}>
-                  <h5>🍽️ Meal Plan Generated</h5>
-                  <p style={{ margin: '10px 0' }}>{analysis.mealPlan.message}</p>
-                  <a 
-                    href={analysis.mealPlan.document.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    style={{ 
-                      display: 'inline-block',
-                      marginTop: '10px',
-                      padding: '8px 16px',
-                      background: '#10b981',
-                      color: 'white',
-                      textDecoration: 'none',
+                 <div className="meal-plan-info" style={{ marginBottom: '20px', padding: '15px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac' }}>
+                   <h5>🍽️ Meal Plan Generated</h5>
+                  {analysis.mealPlan.message && (
+                    <p style={{ margin: '10px 0' }}>{analysis.mealPlan.message}</p>
+                  )}
+                  {analysis.mealPlan.document ? (
+                    <a 
+                      href={analysis.mealPlan.document.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ 
+                        display: 'inline-block',
+                        marginTop: '10px',
+                        padding: '8px 16px',
+                        background: '#10b981',
+                        color: 'white',
+                        textDecoration: 'none',
+                        borderRadius: '6px',
+                        fontWeight: '500'
+                      }}
+                    >
+                      📄 Open Meal Plan: {analysis.mealPlan.document.title}
+                    </a>
+                  ) : analysis.mealPlan.fallback ? (
+                    <pre style={{
+                      background: '#ecfdf5',
+                      padding: '12px',
                       borderRadius: '6px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    📄 Open Meal Plan: {analysis.mealPlan.document.title}
-                  </a>
-                </div>
-              )}
+                      whiteSpace: 'pre-wrap',
+                      marginTop: '12px',
+                      fontFamily: 'var(--font-monospace, monospace)'
+                    }}>
+                      {analysis.mealPlan.fallback}
+                    </pre>
+                  ) : null}
+                 </div>
+               )}
 
               {analysis.weather && (
                 <div className="weather-info">
@@ -680,9 +974,24 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                   <div className="tasks-grid">
                     {preparationTasks.map((task, index) => {
                     const displayTask = getTaskToDisplay(task);
-                    const taskKey = task.id || task.task || index;
+                    const taskKey = getTaskIdentifier(task);
                     const isEditing = editingTaskId === taskKey;
-                    const checklistItems = displayTask.description ? displayTask.description.split(',').map(i => i.trim()) : [];
+                    const checkboxId = `task-${index}`;
+                    let checklistItems = [];
+                    if (displayTask.description) {
+                      const rawDescription = displayTask.description;
+                      checklistItems = rawDescription
+                        .split(/\r?\n/)
+                        .map(item => item.replace(/^[\u2022•*-]+\s*/, '').trim())
+                        .filter(Boolean);
+
+                      if (checklistItems.length <= 1 && rawDescription.includes(',')) {
+                        checklistItems = rawDescription
+                          .split(',')
+                          .map(item => item.trim())
+                          .filter(Boolean);
+                      }
+                    }
                     const suggestedDate = displayTask.suggestedDate ? new Date(displayTask.suggestedDate) : null;
                     // Extract time from suggestedDate if it's a datetime, otherwise use suggestedTime
                     const taskTime = displayTask.suggestedTime || 
@@ -691,7 +1000,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                     
                     return (
                       <div 
-                        key={task.id || index} 
+                        key={taskKey} 
                         className={`task-card ${isTransportationTask(task) ? 'transportation-task' : ''} ${isEditing ? 'editing' : ''}`}
                         onClick={(e) => handleTaskClick(task, e)}
                         style={isTransportationTask(task) ? { cursor: 'pointer' } : {}}
@@ -699,17 +1008,19 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                         <div className="task-selection">
                           <input
                             type="checkbox"
-                            id={`task-${task.id || index}`}
-                            onChange={(e) => handleTaskSelection(task, e.target.checked)}
+                            id={checkboxId}
+                            checked={selectedTasks.some(t => (t.__taskKey || getTaskIdentifier(t)) === taskKey)}
+                            onChange={(e) => handleTaskSelection(task, index, e.target.checked)}
                             className="task-checkbox"
                           />
-                          <label htmlFor={`task-${task.id || index}`} className="task-select-label">
+                          <label htmlFor={checkboxId} className="task-select-label">
                             Add to Calendar
                           </label>
                           <button
                             className="edit-task-btn"
                             onClick={(e) => {
                               e.stopPropagation();
+                              console.log('[edit-task] Toggling edit mode for task:', taskKey, 'Current isEditing:', isEditing);
                               setEditingTaskId(isEditing ? null : taskKey);
                             }}
                             title={isEditing ? "Done Editing" : "Edit Task"}
@@ -866,7 +1177,9 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
                         : 'All checklist items have already been added to your calendar. 🎉'}
                     </p>
                     <p className="no-remaining-subtext">
-                      If plans change, click "Re-generate checklist" to get a fresh set of tasks.
+                      {hasScheduledTasks || hasLinkedTasks
+                        ? 'Modify these tasks directly from your calendar if plans change.'
+                        : 'All tasks have been processed.'}
                     </p>
                   </div>
                 )}
@@ -874,15 +1187,15 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
               {hasLinkedTasks && (
                 <div className="linked-tasks-section">
-                  <h5>📅 Checklist Tasks on Your Calendar</h5>
+                  <h5>✅ Already Scheduled</h5>
                   <p className="linked-tasks-subtext">
-                    These tasks were added from this checklist and already live on your calendar.
+                    These tasks have been added to your calendar and cannot be scheduled again.
                   </p>
                   <div className="linked-tasks-list">
                     {linkedTasks.map((task) => (
-                      <div key={task.id} className="linked-task-card">
+                      <div key={task.id || getTaskIdentifier(task)} className="linked-task-card">
                         <div className="linked-task-header">
-                          <span className="linked-task-title">{task.title}</span>
+                          <span className="linked-task-title">✓ {task.title || task.task || 'Checklist Item'}</span>
                           {task.priority && (
                             <span className="linked-task-priority">{task.priority}</span>
                           )}
@@ -906,30 +1219,47 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
         </div>
 
         {/* Action buttons - outside scrollable area */}
-        {analysis && (
-          <div className="analysis-actions">
-            <div className="action-buttons">
+        <div className="analysis-actions">
+          <div className="action-buttons">
+            {/* Hide regenerate button if: event is AI-generated OR tasks are scheduled OR tasks are linked OR all tasks scheduled */}
+            {(() => {
+              const shouldHide = event.isAIGenerated || hasScheduledTasks || hasLinkedTasks || analysis?.allTasksScheduled;
+              console.log('🔘 [Re-generate Button]', {
+                shouldShow: !shouldHide,
+                isAIGenerated: event.isAIGenerated,
+                hasScheduledTasks,
+                hasLinkedTasks,
+                allTasksScheduled: analysis?.allTasksScheduled,
+                linkedTasksCount: linkedTasks.length,
+                preparationTasksCount: preparationTasks.length
+              });
+              return !shouldHide;
+            })() && (
+              <button
+                className="reanalyze-btn"
+                onClick={analyzeEvent}
+                disabled={loading}
+                title={
+                  isAlreadyAnalyzed
+                    ? 'Update the checklist before scheduling tasks'
+                    : 'Generate a checklist for this event'
+                }
+              >
+                {buttonLabel}
+              </button>
+            )}
+            {analysis && (
               <button
                 className="add-tasks-btn"
                 onClick={addSelectedTasksToCalendar}
-                disabled={selectedTasks.length === 0 || addingTasks}
+                disabled={selectedTasks.length === 0}
                 title="Add selected tasks to your calendar"
               >
                 {addingTasks ? '⏳ Adding...' : '📅 Add to Calendar'}
               </button>
-              {!isChecklistEvent && !isGeneratedEvent && !isAlreadyAnalyzed && (
-                <button
-                  className="reanalyze-btn"
-                  onClick={analyzeEvent}
-                  disabled={isAlreadyAnalyzed}
-                  title="Re-generate the checklist"
-                >
-                  🔄 Re-generate checklist
-                </button>
-              )}
-            </div>
+            )}
           </div>
-        )}
+        </div>
 
         {showUberModal && (
           <UberBookingModal

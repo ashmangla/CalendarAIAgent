@@ -36,22 +36,22 @@ const EventDetails = ({ event, onClose }) => {
   };
 
   const fetchLinkedTasks = useCallback(async () => {
-    if (event.isAnalyzed && event.id) {
-      setLoadingTasks(true);
-      try {
-        const response = await axios.post('/api/get-linked-tasks', {
-          eventId: event.id
-        });
+      if (event.isAnalyzed && event.id) {
+        setLoadingTasks(true);
+        try {
+          const response = await axios.post('/api/get-linked-tasks', {
+            eventId: event.id
+          });
 
-        if (response.data.success) {
-          setLinkedTasks(response.data.linkedTasks || []);
-        }
+          if (response.data.success) {
+            setLinkedTasks(response.data.linkedTasks || []);
+          }
       } catch (err) {
         console.error('Error fetching linked tasks:', err);
-      } finally {
-        setLoadingTasks(false);
+        } finally {
+          setLoadingTasks(false);
+        }
       }
-    }
   }, [event.id, event.isAnalyzed]);
 
   const fetchUnscheduledTasks = useCallback(async () => {
@@ -125,7 +125,7 @@ const EventDetails = ({ event, onClose }) => {
             {event.isAnalyzed && (
               <span className="analyzed-badge" title="Event has been analyzed">✓ Analyzed</span>
             )}
-            {(event.isChecklistEvent || event.isGeneratedEvent) && (
+            {event.isAIGenerated && (
               <span className="checklist-badge" title="Generated from checklist">📋 Checklist</span>
             )}
             <span className={`event-type-badge ${getEventTypeClass(event.type)}`}>
@@ -157,7 +157,7 @@ const EventDetails = ({ event, onClose }) => {
                 <span className="meta-value description-text">
                   {(() => {
                     // Check if this is an AI-generated task with an original event reference
-                    if ((event.isAIGenerated || event.isChecklistEvent) && (originalEventTitle || event.originalEventId)) {
+                    if (event.isAIGenerated && (originalEventTitle || event.originalEventId)) {
                       // Parse description to remove the first line about the original event
                       const matchQuoted = event.description.match(/AI-generated preparation task for "(.+?)"\.\n\n/);
                       const matchEventId = event.description.match(/AI-generated preparation task for event ID .+?\.\n\n/);
@@ -244,7 +244,7 @@ const EventDetails = ({ event, onClose }) => {
                 <div className="loading-tasks">
                   <div className="loading-spinner"></div>
                   <p>Loading remaining tasks...</p>
-                </div>
+            </div>
               ) : (
                 unscheduledTasks.length > 0 ? (
                   <>
@@ -253,7 +253,7 @@ const EventDetails = ({ event, onClose }) => {
                     </p>
                     <ul className="remaining-tasks-list">
                       {unscheduledTasks.map((task, index) => (
-                        <li key={task.id || `${task.task}-${index}`}>
+                        <li key={getTaskIdentifier(task, `${task.category || 'task'}-${index}`)}>
                           <div className="remaining-task-title">{task.task || 'Checklist Task'}</div>
                           <div className="remaining-task-meta">
                             {task.priority && <span className={`priority-pill priority-${task.priority.toLowerCase()}`}>{task.priority}</span>}
@@ -261,7 +261,7 @@ const EventDetails = ({ event, onClose }) => {
                             {task.suggestedDate && (
                               <span>• {formatShortDate(task.suggestedDate)}</span>
                             )}
-                          </div>
+          </div>
                           {task.description && (
                             <p className="remaining-task-description">{task.description}</p>
                           )}
@@ -278,53 +278,53 @@ const EventDetails = ({ event, onClose }) => {
               )}
             </div>
 
-            <div className="linked-tasks-section">
-              <h3 className="linked-tasks-title">📋 Linked Preparation Tasks</h3>
+          <div className="linked-tasks-section">
+            <h3 className="linked-tasks-title">📋 Linked Preparation Tasks</h3>
 
-              {loadingTasks ? (
-                <div className="loading-tasks">
-                  <div className="loading-spinner"></div>
-                  <p>Loading linked tasks...</p>
-                </div>
-              ) : linkedTasks.length > 0 ? (
-                <>
-                  <p className="linked-tasks-count">
-                    {linkedTasks.length} {linkedTasks.length === 1 ? 'task' : 'tasks'} generated from this event
-                  </p>
-                  <div className="linked-tasks-list">
-                    {linkedTasks.map((task) => (
-                      <div key={task.id} className="linked-task-card">
-                        <div className="linked-task-header">
-                          <h4 className="linked-task-title">{task.title}</h4>
-                          {task.priority && (
-                            <span className={`task-priority-badge priority-${task.priority.toLowerCase()}`}>
-                              {task.priority}
-                            </span>
-                          )}
-                        </div>
-                        <div className="linked-task-meta">
-                          <span className="task-date">
-                            <span className="task-icon">📅</span>
-                            {formatShortDate(task.date)}
+            {loadingTasks ? (
+              <div className="loading-tasks">
+                <div className="loading-spinner"></div>
+                <p>Loading linked tasks...</p>
+              </div>
+            ) : linkedTasks.length > 0 ? (
+              <>
+                <p className="linked-tasks-count">
+                  {linkedTasks.length} {linkedTasks.length === 1 ? 'task' : 'tasks'} generated from this event
+                </p>
+                <div className="linked-tasks-list">
+                  {linkedTasks.map((task) => (
+                    <div key={task.id} className="linked-task-card">
+                      <div className="linked-task-header">
+                        <h4 className="linked-task-title">{task.title}</h4>
+                        {task.priority && (
+                          <span className={`task-priority-badge priority-${task.priority.toLowerCase()}`}>
+                            {task.priority}
                           </span>
-                          {task.category && (
-                            <span className="task-category">
-                              <span className="task-icon">🏷️</span>
-                              {task.category}
-                            </span>
-                          )}
-                        </div>
-                        {task.description && (
-                          <p className="linked-task-description">{task.description}</p>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="no-linked-tasks">No preparation tasks have been added yet.</p>
-              )}
-            </div>
+                      <div className="linked-task-meta">
+                        <span className="task-date">
+                          <span className="task-icon">📅</span>
+                          {formatShortDate(task.date)}
+                        </span>
+                        {task.category && (
+                          <span className="task-category">
+                            <span className="task-icon">🏷️</span>
+                            {task.category}
+                          </span>
+                        )}
+                      </div>
+                      {task.description && (
+                        <p className="linked-task-description">{task.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="no-linked-tasks">No preparation tasks have been added yet.</p>
+            )}
+          </div>
           </>
         )}
       </div>
