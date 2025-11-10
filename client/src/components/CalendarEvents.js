@@ -785,15 +785,14 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     return isTodayEvent;
   }) : events;
 
+  // Log event count to console for debugging
+  console.log(`📅 Calendar: Found ${displayEvents.length} ${showTodayOnly ? "event(s) today" : "upcoming events"}${isGoogleConnected ? ' from Google Calendar' : ' (sample data)'}`);
+
   return (
     <div className="calendar-container">
       <div className="calendar-header">
         <div className="calendar-title-section">
           <h2>{showTodayOnly ? "Today's Events" : "Your Calendar Events"}</h2>
-        </div>
-        <div className="events-count">
-          Found {displayEvents.length} {showTodayOnly ? "event(s) today" : "upcoming events"}
-          {isGoogleConnected ? ' from Google Calendar' : ' (sample data)'}
         </div>
       </div>
       

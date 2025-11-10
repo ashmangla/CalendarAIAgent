@@ -52,6 +52,66 @@ function clearConversation(req, conversationId) {
   }
 }
 
+/**
+ * Extract the most recently mentioned event from conversation history
+ * Useful for understanding references like "change that to 3pm" or "cancel that"
+ */
+function getLastMentionedEvent(conversationHistory) {
+  if (!conversationHistory || conversationHistory.length === 0) {
+    return null;
+  }
+  
+  // Search backwards through history for event details
+  for (let i = conversationHistory.length - 1; i >= 0; i--) {
+    const message = conversationHistory[i];
+    
+    // Look for assistant messages that might contain event confirmation
+    if (message.role === 'assistant' && message.content) {
+      // Try to extract event details from the message
+      // This is a simple heuristic - the LLM should handle most context resolution
+      const content = message.content.toLowerCase();
+      
+      // Check if this message is about an event
+      if (content.includes('scheduled') || content.includes('created') || 
+          content.includes('meeting') || content.includes('appointment') ||
+          content.includes('event')) {
+        
+        // Try to extract basic info (title, date, time) from the message
+        // This is a fallback - ideally the LLM uses full conversation context
+        return {
+          messageContent: message.content,
+          timestamp: message.timestamp || Date.now()
+        };
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Get conversation context summary for debugging
+ */
+function getConversationSummary(conversation) {
+  if (!conversation) {
+    return 'No active conversation';
+  }
+  
+  const historyLength = conversation.conversationHistory ? conversation.conversationHistory.length / 2 : 0;
+  const status = conversation.status || 'unknown';
+  const hasEventDetails = conversation.eventDetails && Object.keys(conversation.eventDetails).length > 0;
+  
+  return {
+    id: conversation.id,
+    status: status,
+    exchangeCount: Math.floor(historyLength),
+    hasEventDetails: hasEventDetails,
+    eventTitle: conversation.eventDetails?.title || null,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt
+  };
+}
+
 function mergeEventDetails(base = {}, updates = {}) {
   const merged = { ...base };
   const fields = ['title', 'date', 'time', 'duration', 'location', 'description'];
@@ -105,10 +165,15 @@ router.post('/process', async (req, res) => {
     }
 
     // Extract conversation state from context
-    const conversationHistory = context.conversationHistory || [];
+    let conversationHistory = context.conversationHistory || [];
     const followUpCount = context.followUpCount || 0;
     let conversationId = context.conversationId || null;
     let conversation = conversationId ? getConversation(req, conversationId) : null;
+    
+    // Get conversation history from stored conversation if available
+    if (conversation && conversation.conversationHistory) {
+      conversationHistory = conversation.conversationHistory;
+    }
 
     // Parse intent and extract event details with conversation context
     const intentResult = await voiceAdapter.parseIntent(transcript, {
@@ -156,6 +221,24 @@ router.post('/process', async (req, res) => {
       conversationId = null;
     }
 
+    // Update conversation history with this exchange
+    const aiResponse = intentResult.followUpQuestion || intentResult.response || 'Understood';
+    const newHistory = [
+      ...conversationHistory,
+      { role: 'user', content: transcript },
+      { role: 'assistant', content: aiResponse }
+    ];
+    
+    // Keep only last 4 exchanges (8 messages total)
+    const trimmedHistory = newHistory.slice(-8);
+    
+    // Save updated history to conversation
+    if (conversation) {
+      conversation.conversationHistory = trimmedHistory;
+      conversation.followUpCount = followUpCount;
+      saveConversation(req, conversationId, conversation);
+    }
+
     res.json({
       success: true,
       intent: intentResult.intent,
@@ -169,8 +252,9 @@ router.post('/process', async (req, res) => {
       readyToProcess: intentResult.readyToProcess !== false,
       abort: intentResult.abort || false,
       abortMessage: intentResult.abortMessage || null,
-      conversationHistory: intentResult.conversationHistory || conversationHistory,
-      conversationId: conversationId
+      conversationHistory: trimmedHistory,
+      conversationId: conversationId,
+      historyLength: Math.floor(trimmedHistory.length / 2)
     });
   } catch (error) {
     console.error('Error processing voice input:', error);

@@ -56,9 +56,21 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
     exclude: ''
   });
   const [generatingMealPlan, setGeneratingMealPlan] = useState(false);
+  const [pendingAnalysis, setPendingAnalysis] = useState(false); // Track if analysis is pending after meal plan prefs
   const previousEventIdRef = useRef(null);
   const eventId = event?.id || event?.eventId;
   const hydratingRef = useRef(false);
+  const hasShownModalForCurrentAnalysis = useRef(false); // Track if modal was already shown for this analysis cycle
+
+  // Client-side meal prep event detection
+  const isMealPrepEvent = (event) => {
+    if (!event) return false;
+    const text = `${event.title || ''} ${event.description || ''} ${event.type || ''}`.toLowerCase();
+    const hasPrep = text.includes('prep');
+    if (!hasPrep) return false;
+    const mealKeywords = ['meal', 'lunch', 'dinner', 'breakfast', 'snack'];
+    return mealKeywords.some(keyword => text.includes(keyword));
+  };
   function normalizeAnalysisPayload(rawAnalysis) {
     if (!rawAnalysis) return null;
 
@@ -108,6 +120,7 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
 
     setError(null);
     setShowMealPlanModal(false);
+    hasShownModalForCurrentAnalysis.current = false; // Reset flag for new event
     setEditingTaskId(null);
     setSelectedTasks([]);
     setShowDescriptionEditor(false);
@@ -363,7 +376,7 @@ function getTaskIdentifier(task) {
     }
   };
   
-  const analyzeEvent = useCallback(async () => {
+  const analyzeEvent = useCallback(async (withMealPlanPreferences = null) => {
     if (!event || !eventId) {
       setError('Event is missing an identifier. Please refresh and try again.');
       return;
@@ -373,7 +386,8 @@ function getTaskIdentifier(task) {
     setError(null);
     console.log('[analysis] request_start', {
       eventId,
-      title: event.title
+      title: event.title,
+      hasMealPlanPrefs: !!withMealPlanPreferences
     });
     
     const source = axios.CancelToken.source();
@@ -402,10 +416,22 @@ function getTaskIdentifier(task) {
           };
         }
       }
+
+      // Build request payload with optional meal plan preferences
+      const requestPayload = { 
+        event: eventToAnalyze, 
+        forceReanalyze: allowManualReanalyze 
+      };
+
+      // If meal plan preferences are provided, include them
+      if (withMealPlanPreferences) {
+        requestPayload.mealPlanPreferences = withMealPlanPreferences;
+        requestPayload.shouldAttemptMealPlan = true;
+      }
       
       const response = await axios.post(
         '/api/analyze-event',
-        { event: eventToAnalyze, forceReanalyze: allowManualReanalyze },
+        requestPayload,
         { cancelToken: source.token }
       );
       
@@ -422,10 +448,12 @@ function getTaskIdentifier(task) {
           finalized: false
         });
         setHasScheduledTasks(false);
-        setIsAlreadyAnalyzed(true);
+        // Don't mark as analyzed yet - only mark when user schedules tasks
+        setIsAlreadyAnalyzed(false);
         console.log('[analysis] request_success', {
           eventId,
-          title: event.title
+          title: event.title,
+          tasksGenerated: normalizedAnalysis?.preparationTasks?.length || 0
         });
 
       } else {
@@ -469,11 +497,39 @@ function getTaskIdentifier(task) {
   }, [event, eventId, editedDescription, onEventAnalyzed, isAlreadyAnalyzed, hasScheduledTasks]);
 
   // Generate meal plan with user preferences
+  // Handle "Generate Checklist" button click - check for meal prep events first
+  const handleGenerateChecklist = () => {
+    if (!isAlreadyAnalyzed && isMealPrepEvent(event)) {
+      // This is a meal prep event and hasn't been analyzed yet
+      // Show modal to get preferences first
+      console.log('[meal-plan] Detected meal prep event, showing preferences modal');
+      setPendingAnalysis(true);
+      setShowMealPlanModal(true);
+      hasShownModalForCurrentAnalysis.current = true; // Mark that we've shown the modal
+    } else {
+      // Not a meal prep event or already analyzed - proceed normally
+      analyzeEvent();
+    }
+  };
+
   const handleGenerateMealPlan = async () => {
     setGeneratingMealPlan(true);
     setError(null);
     
     try {
+      if (pendingAnalysis) {
+        // This is the first analysis with meal plan preferences
+        console.log('[meal-plan] Analyzing event with preferences:', mealPlanPreferences);
+        setShowMealPlanModal(false);
+        setPendingAnalysis(false);
+        hasShownModalForCurrentAnalysis.current = true; // Prevent modal from showing again
+        // Call analyzeEvent with preferences
+        await analyzeEvent(mealPlanPreferences);
+        setGeneratingMealPlan(false);
+        return;
+      }
+
+      // This is a re-generation of meal plan for already analyzed event
       const response = await axios.post('/api/generate-meal-plan', {
         event: event,
         preferences: mealPlanPreferences,
@@ -513,8 +569,10 @@ function getTaskIdentifier(task) {
 
   // Check if meal plan preferences are needed after analysis
   useEffect(() => {
-    if (analysis && analysis.requiresMealPlanPreferences) {
+    if (analysis && analysis.requiresMealPlanPreferences && !hasShownModalForCurrentAnalysis.current) {
+      console.log('[meal-plan] Analysis requires preferences, showing modal');
       setShowMealPlanModal(true);
+      hasShownModalForCurrentAnalysis.current = true;
     }
   }, [analysis]);
 
@@ -885,36 +943,226 @@ function getTaskIdentifier(task) {
                   {analysis.mealPlan.message && (
                     <p style={{ margin: '10px 0' }}>{analysis.mealPlan.message}</p>
                   )}
-                  {analysis.mealPlan.document ? (
-                    <a 
-                      href={analysis.mealPlan.document.url} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      style={{ 
-                        display: 'inline-block',
-                        marginTop: '10px',
-                        padding: '8px 16px',
-                        background: '#10b981',
-                        color: 'white',
-                        textDecoration: 'none',
-                        borderRadius: '6px',
-                        fontWeight: '500'
-                      }}
-                    >
-                      📄 Open Meal Plan: {analysis.mealPlan.document.title}
-                    </a>
-                  ) : analysis.mealPlan.fallback ? (
-                    <pre style={{
+                  
+                  {/* Display nutrition summary if available */}
+                  {analysis.mealPlan.nutrients && (
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'repeat(4, 1fr)', 
+                      gap: '10px', 
+                      marginTop: '15px',
+                      marginBottom: '15px',
+                      padding: '10px',
                       background: '#ecfdf5',
-                      padding: '12px',
-                      borderRadius: '6px',
-                      whiteSpace: 'pre-wrap',
-                      marginTop: '12px',
-                      fontFamily: 'var(--font-monospace, monospace)'
+                      borderRadius: '6px'
                     }}>
-                      {analysis.mealPlan.fallback}
-                    </pre>
-                  ) : null}
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Calories</div>
+                        <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                          {Math.round(analysis.mealPlan.nutrients.calories)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Protein</div>
+                        <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                          {Math.round(analysis.mealPlan.nutrients.protein)}g
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Carbs</div>
+                        <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                          {Math.round(analysis.mealPlan.nutrients.carbohydrates)}g
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Fat</div>
+                        <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                          {Math.round(analysis.mealPlan.nutrients.fat)}g
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Display meals grouped by day */}
+                  {analysis.mealPlan.meals && analysis.mealPlan.meals.length > 0 && (
+                    <div style={{ marginTop: '15px' }}>
+                      {(() => {
+                        // Group meals by day
+                        const mealsByDay = {};
+                        analysis.mealPlan.meals.forEach(meal => {
+                          if (!mealsByDay[meal.day]) {
+                            mealsByDay[meal.day] = [];
+                          }
+                          mealsByDay[meal.day].push(meal);
+                        });
+
+                        return Object.keys(mealsByDay).sort((a, b) => parseInt(a) - parseInt(b)).map(day => (
+                          <div key={day} style={{ marginBottom: '20px' }}>
+                            <h6 style={{ 
+                              fontSize: '14px', 
+                              fontWeight: '600', 
+                              color: '#047857',
+                              marginBottom: '10px',
+                              paddingBottom: '5px',
+                              borderBottom: '2px solid #86efac'
+                            }}>
+                              Day {day}
+                            </h6>
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                              {mealsByDay[day].map((meal, idx) => (
+                                <div key={idx} style={{
+                                  padding: '12px',
+                                  background: 'white',
+                                  borderRadius: '6px',
+                                  border: '1px solid #d1fae5'
+                                }}>
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    justifyContent: 'space-between',
+                                    alignItems: 'flex-start',
+                                    marginBottom: '8px'
+                                  }}>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ 
+                                        fontSize: '11px', 
+                                        fontWeight: '600', 
+                                        color: '#6b7280',
+                                        textTransform: 'uppercase',
+                                        marginBottom: '4px'
+                                      }}>
+                                        {meal.mealType}
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '14px', 
+                                        fontWeight: '600', 
+                                        color: '#1f2937',
+                                        marginBottom: '4px'
+                                      }}>
+                                        {meal.title}
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '12px', 
+                                        color: '#6b7280',
+                                        display: 'flex',
+                                        gap: '12px',
+                                        flexWrap: 'wrap'
+                                      }}>
+                                        {meal.readyInMinutes && (
+                                          <span>⏱️ {meal.readyInMinutes} min</span>
+                                        )}
+                                        {meal.servings && (
+                                          <span>🍽️ {meal.servings} servings</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {meal.image && (
+                                      <img 
+                                        src={meal.image} 
+                                        alt={meal.title}
+                                        style={{
+                                          width: '80px',
+                                          height: '80px',
+                                          objectFit: 'cover',
+                                          borderRadius: '6px',
+                                          marginLeft: '12px'
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                  {meal.summary && (
+                                    <div style={{ 
+                                      fontSize: '12px', 
+                                      color: '#4b5563',
+                                      marginBottom: '8px',
+                                      lineHeight: '1.4'
+                                    }}>
+                                      {meal.summary}
+                                    </div>
+                                  )}
+                                  {meal.sourceUrl && (
+                                    <a 
+                                      href={meal.sourceUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        fontSize: '12px',
+                                        color: '#059669',
+                                        textDecoration: 'none',
+                                        fontWeight: '500'
+                                      }}
+                                    >
+                                      View Recipe →
+                                    </a>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Fallback text display (for LLM-generated plans) */}
+                  {analysis.mealPlan.fallback && !analysis.mealPlan.meals && (
+                    <div style={{
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      padding: '20px',
+                      borderRadius: '12px',
+                      marginTop: '15px',
+                      color: 'white',
+                      boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                    }}>
+                      <div style={{
+                        background: 'rgba(255,255,255,0.95)',
+                        padding: '15px',
+                        borderRadius: '8px',
+                        color: '#1a202c',
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'system-ui, -apple-system, sans-serif',
+                        fontSize: '14px',
+                        lineHeight: '1.8',
+                        maxHeight: '500px',
+                        overflowY: 'auto'
+                      }}>
+                        {analysis.mealPlan.fallback}
+                      </div>
+                      <div style={{
+                        marginTop: '12px',
+                        fontSize: '12px',
+                        opacity: 0.9,
+                        textAlign: 'center'
+                      }}>
+                        💡 This meal plan was generated by AI as a fallback
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Formatted text display (for Spoonacular plans) */}
+                  {analysis.mealPlan.formattedText && analysis.mealPlan.meals && (
+                    <details style={{ marginTop: '15px' }}>
+                      <summary style={{ 
+                        cursor: 'pointer', 
+                        fontSize: '13px', 
+                        color: '#059669',
+                        fontWeight: '500'
+                      }}>
+                        View as Text
+                      </summary>
+                      <pre style={{
+                        background: '#ecfdf5',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        whiteSpace: 'pre-wrap',
+                        marginTop: '8px',
+                        fontFamily: 'var(--font-monospace, monospace)',
+                        fontSize: '12px',
+                        lineHeight: '1.6'
+                      }}>
+                        {analysis.mealPlan.formattedText}
+                      </pre>
+                    </details>
+                  )}
                  </div>
                )}
 
@@ -1172,14 +1420,16 @@ function getTaskIdentifier(task) {
                 ) : (
                   <div className="no-remaining-tasks">
                     <p>
-                      {hasLinkedTasks
-                        ? 'All checklist items from this checklist are on your calendar.'
-                        : 'All checklist items have already been added to your calendar. 🎉'}
+                      {hasLinkedTasks || hasScheduledTasks
+                        ? (hasLinkedTasks 
+                            ? 'All checklist items from this checklist are on your calendar.'
+                            : 'All checklist items have already been added to your calendar. 🎉')
+                        : 'No checklist items were generated. Try regenerating or check the event details.'}
                     </p>
                     <p className="no-remaining-subtext">
                       {hasScheduledTasks || hasLinkedTasks
                         ? 'Modify these tasks directly from your calendar if plans change.'
-                        : 'All tasks have been processed.'}
+                        : 'Click "Generate Checklist" to create tasks for this event.'}
                     </p>
                   </div>
                 )}
@@ -1221,23 +1471,11 @@ function getTaskIdentifier(task) {
         {/* Action buttons - outside scrollable area */}
         <div className="analysis-actions">
           <div className="action-buttons">
-            {/* Hide regenerate button if: event is AI-generated OR tasks are scheduled OR tasks are linked OR all tasks scheduled */}
-            {(() => {
-              const shouldHide = event.isAIGenerated || hasScheduledTasks || hasLinkedTasks || analysis?.allTasksScheduled;
-              console.log('🔘 [Re-generate Button]', {
-                shouldShow: !shouldHide,
-                isAIGenerated: event.isAIGenerated,
-                hasScheduledTasks,
-                hasLinkedTasks,
-                allTasksScheduled: analysis?.allTasksScheduled,
-                linkedTasksCount: linkedTasks.length,
-                preparationTasksCount: preparationTasks.length
-              });
-              return !shouldHide;
-            })() && (
+            {/* Hide "Generate Checklist" button after any tasks are scheduled - only show "Add to Calendar" */}
+            {!event.isAIGenerated && !hasScheduledTasks && !hasLinkedTasks && (
               <button
                 className="reanalyze-btn"
-                onClick={analyzeEvent}
+                onClick={handleGenerateChecklist}
                 disabled={loading}
                 title={
                   isAlreadyAnalyzed
@@ -1366,10 +1604,17 @@ function getTaskIdentifier(task) {
                 <div className="meal-plan-modal-actions">
                   <button
                     className="cancel-btn"
-                    onClick={() => setShowMealPlanModal(false)}
+                    onClick={() => {
+                      setShowMealPlanModal(false);
+                      if (pendingAnalysis) {
+                        // User skipped meal plan preferences, analyze without them
+                        setPendingAnalysis(false);
+                        analyzeEvent();
+                      }
+                    }}
                     disabled={generatingMealPlan}
                   >
-                    Skip
+                    {pendingAnalysis ? 'Skip Meal Plan' : 'Cancel'}
                   </button>
                   <button
                     className="generate-btn"

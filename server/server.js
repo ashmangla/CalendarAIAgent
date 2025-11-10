@@ -547,6 +547,13 @@ app.post('/api/analyze-event', async (req, res) => {
         remainingCount: remainingTasks.length,
         linkedCount: linkedTasks.length
       });
+      
+      // If both remaining and linked tasks are 0, this event was incorrectly marked as analyzed
+      // Force re-analysis instead of returning empty cache
+      if (remainingTasks.length === 0 && linkedTasks.length === 0) {
+        console.log('⚠️  Event marked as analyzed but has no tasks - forcing re-analysis');
+        // Fall through to normal analysis below
+      } else {
  
       const analysisPayload = {
         eventSummary: `Remaining checklist items for ${eventToAnalyze.title || 'this event'}`,
@@ -562,16 +569,17 @@ app.post('/api/analyze-event', async (req, res) => {
         remainingTaskCount: remainingTasks.length
       };
 
-      return res.json({
-        success: true,
-        event: { ...eventToAnalyze, isAnalyzed: true },
-        analysis: analysisPayload,
-        message: remainingTasks.length > 0
-          ? 'Loaded remaining checklist items that have not been added to your calendar.'
-          : linkedTasks.length > 0
-            ? 'All checklist items are on your calendar. Review them below.'
-            : 'All checklist items have already been added to your calendar.'
-      });
+        return res.json({
+          success: true,
+          event: { ...eventToAnalyze, isAnalyzed: true },
+          analysis: analysisPayload,
+          message: remainingTasks.length > 0
+            ? 'Loaded remaining checklist items that have not been added to your calendar.'
+            : linkedTasks.length > 0
+              ? 'All checklist items are on your calendar. Review them below.'
+              : 'No checklist items were generated for this event.'
+        });
+      }
     }
 
     const shouldAttemptMealPlan = shouldAttemptMealPlanDetection(eventToAnalyze);
@@ -588,12 +596,21 @@ app.post('/api/analyze-event', async (req, res) => {
 
     // Get Google OAuth tokens for document processing (if available)
     const tokens = req.session?.tokens || null;
+    
+    // Extract meal plan preferences from request body if provided
+    const mealPlanPreferences = req.body.mealPlanPreferences || null;
+    
+    console.log('[analysis] Request body keys:', Object.keys(req.body));
+    console.log('[analysis] mealPlanPreferences from body:', mealPlanPreferences);
+    console.log('[analysis] shouldAttemptMealPlan from body:', req.body.shouldAttemptMealPlan);
+    
     const analysisStart = Date.now();
     const analysisLogContext = {
       eventId: eventIdentifier,
       title: eventToAnalyze.title,
       source: eventToAnalyze.source || 'mock',
       shouldAttemptMealPlan,
+      hasMealPlanPrefs: !!mealPlanPreferences,
       forceReanalyze: shouldForceReanalyze
     };
 
@@ -607,7 +624,10 @@ app.post('/api/analyze-event', async (req, res) => {
     let analysisTimeoutId;
 
     try {
-      const analysisPromise = eventAnalyzer.analyzeEvent(eventToAnalyze, tokens, { shouldAttemptMealPlan });
+      const analysisPromise = eventAnalyzer.analyzeEvent(eventToAnalyze, tokens, { 
+        shouldAttemptMealPlan,
+        mealPlanPreferences
+      });
       const timeoutPromise = new Promise((_, reject) => {
         analysisTimeoutId = setTimeout(() => reject(timeoutError), ANALYSIS_TIMEOUT_MS);
       });
@@ -660,7 +680,11 @@ app.post('/api/analyze-event', async (req, res) => {
     }
 
     if (analysis.mealPlan) {
-      console.log('🥘 Meal plan summary (document present?):', Boolean(analysis.mealPlan.document));
+      console.log('🥘 Meal plan summary:', {
+        hasMeals: Boolean(analysis.mealPlan.meals),
+        mealCount: analysis.mealPlan.meals?.length || 0,
+        source: analysis.mealPlan.source
+      });
     }
  
     // Don't mark the event as analyzed yet - wait until tasks are added
@@ -764,7 +788,7 @@ app.post('/api/generate-meal-plan', async (req, res) => {
         requiresPreferences: analysis.requiresMealPlanPreferences
       });
 
-      if (analysis.mealPlan && (analysis.mealPlan.document || analysis.mealPlan.fallback)) {
+      if (analysis.mealPlan && (analysis.mealPlan.meals || analysis.mealPlan.fallback || analysis.mealPlan.formattedText)) {
         return res.json({
           success: true,
           analysis: analysis,

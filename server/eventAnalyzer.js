@@ -53,18 +53,14 @@ class CalendarEventAnalyzer {
         };
       }
 
-      if (mealPlanResult && mealPlanResult.document) {
-        console.log('[eventAnalyzer] Using Spoonacular meal plan with Google Doc');
+      if (mealPlanResult && mealPlanResult.mealPlan) {
+        console.log('[eventAnalyzer] Using Spoonacular meal plan');
         analysis.mealPlan = {
-          document: {
-            title: mealPlanResult.document.title,
-            url: mealPlanResult.document.url,
-            documentId: mealPlanResult.document.documentId
-          },
-          message: 'A personalized meal plan has been generated and saved to Google Docs.',
+          meals: mealPlanResult.mealPlan.meals || [],
+          message: 'A personalized meal plan has been generated. Review the suggested menu below.',
           preferences: mealPlanResult.preferences || null,
-          nutrients: mealPlanResult.mealPlan?.nutrients || null,
-          fallback: mealPlanResult.formattedText || null,
+          nutrients: mealPlanResult.mealPlan.nutrients || null,
+          formattedText: mealPlanResult.formattedText || null,
           source: 'spoonacular'
         };
 
@@ -74,29 +70,17 @@ class CalendarEventAnalyzer {
           const existingTask = analysis.preparationTasks.find(task => task.isMealPlanTask);
           if (!existingTask) {
             analysis.preparationTasks.unshift({
-              id: 'meal_plan_doc',
+              id: 'meal_plan_review',
               task: 'Review Generated Meal Plan',
               priority: 'High',
               category: 'Meal Planning',
               estimatedTime: '10 minutes',
               suggestedDate: event.date,
-              description: `View meal plan document: ${mealPlanResult.document.url}`,
+              description: `Review the ${mealPlanResult.preferences?.days || 7}-day meal plan with ${mealPlanResult.mealPlan.meals?.length || 0} recipes`,
               isMealPlanTask: true
             });
           }
         }
-      } else if (mealPlanResult && mealPlanResult.formattedText) {
-        // Tool succeeded but no document - show formatted text
-        console.log('[eventAnalyzer] Using Spoonacular meal plan (no Google Doc)');
-        analysis.mealPlan = {
-          document: null,
-          message: 'Meal plan generated from Spoonacular. Review the suggested menu below.',
-          preferences: mealPlanResult.preferences || null,
-          nutrients: mealPlanResult.mealPlan?.nutrients || null,
-          fallback: mealPlanResult.formattedText,
-          source: 'spoonacular'
-        };
-        analysis.requiresMealPlanPreferences = false;
       } else if (mealPlanFallback) {
         // LLM fallback succeeded - show it
         console.log('[eventAnalyzer] Using LLM-generated meal plan (Spoonacular fallback)');
