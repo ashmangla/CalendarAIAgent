@@ -4,12 +4,14 @@
 1. [Project Overview](#project-overview)
 2. [Technology Stack](#technology-stack)
 3. [System Architecture](#system-architecture)
-4. [Core Components](#core-components)
-5. [Data Flow](#data-flow)
-6. [AI/ML Integration](#aiml-integration)
-7. [API Design](#api-design)
-8. [Security & Authentication](#security--authentication)
-9. [Deployment Architecture](#deployment-architecture)
+4. [Agent Architecture](#agent-architecture)
+5. [MCP Integration](#mcp-integration)
+6. [Core Components](#core-components)
+7. [Data Flow](#data-flow)
+8. [AI/ML Integration](#aiml-integration)
+9. [API Design](#api-design)
+10. [Security & Authentication](#security--authentication)
+11. [Deployment Architecture](#deployment-architecture)
 
 ---
 
@@ -200,6 +202,360 @@ server/
 │       └── VoiceAdapterFactory.js   # Adapter pattern
 └── server.js                   # Express app entry point
 ```
+
+---
+
+## Agent Architecture
+
+### Overview
+The Calendar AI Agent follows an **agentic architecture** where the AI system acts autonomously to analyze events, generate tasks, and coordinate with external tools and services. The agent uses **tool calling** and **context orchestration** to provide intelligent assistance.
+
+### Agent Design Pattern
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Event Agent (Orchestrator)                │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │            Agent Decision Layer                     │    │
+│  │  • Analyze event context                           │    │
+│  │  • Determine required tools/services               │    │
+│  │  • Coordinate parallel tool execution              │    │
+│  │  • Synthesize results into actionable tasks        │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │            Tool/Service Layer                       │    │
+│  │                                                     │    │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐        │    │
+│  │  │ Weather  │  │ Google   │  │   MCP    │        │    │
+│  │  │ Service  │  │  Docs    │  │  Tools   │        │    │
+│  │  └──────────┘  └──────────┘  └──────────┘        │    │
+│  │                                                     │    │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐        │    │
+│  │  │Wishlist  │  │  Uber    │  │ Calendar │        │    │
+│  │  │ Analyzer │  │   API    │  │ Conflict │        │    │
+│  │  └──────────┘  └──────────┘  └──────────┘        │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │            LLM Reasoning Layer                      │    │
+│  │  • OpenAI GPT-4o (primary)                         │    │
+│  │  • Context window: 128k tokens                     │    │
+│  │  • Structured output (JSON mode)                   │    │
+│  │  • Function calling for tool use                   │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Agent Capabilities
+
+#### 1. Context Gathering (Parallel Execution)
+The agent automatically gathers relevant context for each event:
+
+```javascript
+// Parallel context gathering
+const [weatherData, documentContext, mealPlanResult] = await Promise.all([
+  fetchWeatherContext(event),      // Weather for outdoor events
+  fetchDocumentContext(event),      // Google Docs in description
+  prepareMealPlanContext(event)     // Meal plans for meal prep
+]);
+```
+
+**Why Parallel?**
+- Faster response times (2-3s vs 6-8s sequential)
+- Better user experience
+- Efficient resource utilization
+
+#### 2. Tool Selection & Orchestration
+The agent decides which tools to use based on event characteristics:
+
+```
+Event Type Detection:
+├─ "meal prep" → Meal Planning MCP Tool
+├─ Outdoor event → Weather Service
+├─ Has Google Doc URL → Document Processor
+├─ Transportation needed → Uber API
+└─ Wishlist item → Wishlist Analyzer
+```
+
+#### 3. Reasoning & Task Generation
+The agent uses LLM reasoning to:
+- Break down complex events into 4-6 preparation tasks
+- Suggest optimal timing for each task
+- Prioritize tasks (High/Medium/Low)
+- Generate 4-5 contextual tips
+- Create timeline with milestones
+
+**Prompt Structure**:
+```
+System Prompt: Role definition, constraints, output format
+    ↓
+Context Injection: Weather, docs, meal plans, wishlist
+    ↓
+User Prompt: Event details, specific requirements
+    ↓
+Structured Output: JSON with tasks, timeline, tips
+```
+
+#### 4. Adaptive Behavior
+The agent adapts based on:
+- **Event type**: Different strategies for meetings vs meal prep vs travel
+- **Available context**: Uses what's available, gracefully handles missing data
+- **User history**: Learns from conversation history (voice assistant)
+- **Failures**: Fallback mechanisms (LLM meal plans if Spoonacular fails)
+
+### Agent Workflow
+
+```
+1. Event Input
+   ↓
+2. Event Classification
+   ├─ Type: meeting, meal prep, travel, etc.
+   ├─ Complexity: simple, moderate, complex
+   └─ Required tools: weather, docs, meal planning
+   ↓
+3. Context Orchestration
+   ├─ Parallel tool execution
+   ├─ Timeout handling (35s max)
+   └─ Partial success handling
+   ↓
+4. LLM Reasoning
+   ├─ Synthesize all context
+   ├─ Generate preparation tasks
+   ├─ Create timeline
+   └─ Provide tips
+   ↓
+5. Response Formatting
+   ├─ Structure tasks by priority
+   ├─ Add suggested dates
+   └─ Include rich context (weather, meal plans)
+   ↓
+6. Caching & State Management
+   ├─ Cache remaining tasks
+   ├─ Track scheduled vs unscheduled
+   └─ Enable incremental scheduling
+```
+
+### Voice Agent Architecture
+
+The voice assistant is a specialized agent with conversation memory:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Voice Agent                               │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │         Conversation State Manager                  │    │
+│  │  • Track last 4 exchanges (8 messages)             │    │
+│  │  • Maintain event details across turns             │    │
+│  │  • Clear on event creation                         │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │         Intent Detection & Parsing                  │    │
+│  │  • add_event, delete_event, add_to_wishlist        │    │
+│  │  • Extract: title, date, time, location            │    │
+│  │  • Handle ambiguity with follow-ups                │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │         Multi-turn Dialogue Management              │    │
+│  │  • Ask clarifying questions                        │    │
+│  │  • Resolve references ("that meeting", "it")       │    │
+│  │  • Handle corrections ("change it to 3pm")         │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │         Conflict Detection & Resolution             │    │
+│  │  • Check calendar for conflicts                    │    │
+│  │  • Suggest alternative times                       │    │
+│  │  • Allow override (double booking)                 │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Design Decisions**:
+- **4 exchanges**: Optimal balance between context and token cost
+- **Session-based**: Privacy-friendly, no persistent storage
+- **Clear on success**: Fresh start for next event
+- **Reference resolution**: LLM uses history to understand "it", "that"
+
+---
+
+## MCP Integration
+
+### What is MCP?
+
+**Model Context Protocol (MCP)** is an open protocol that enables AI systems to securely connect to external data sources and tools. It provides a standardized way for LLMs to interact with external services.
+
+**Key Concepts**:
+- **MCP Server**: Exposes tools/resources via JSON-RPC 2.0
+- **MCP Client**: Connects to servers and calls tools
+- **Tools**: Functions the LLM can invoke (e.g., search recipes, get nutrition)
+- **Resources**: Data sources the LLM can read (e.g., documents, databases)
+
+### Why MCP?
+
+| Benefit | Description |
+|---------|-------------|
+| **Standardization** | Common protocol across different AI systems |
+| **Security** | Controlled access to external services |
+| **Composability** | Mix and match different MCP servers |
+| **Maintainability** | Update tools without changing AI code |
+
+### MCP Architecture in This Project
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Event Agent (Client)                      │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │         MCP Meal Planning Client                    │    │
+│  │  • Spawns spoonacular-mcp process                  │    │
+│  │  • Sends JSON-RPC 2.0 requests                     │    │
+│  │  • Parses structured responses                     │    │
+│  │  • Handles errors & fallbacks                      │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓ stdin/stdout                      │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│              Spoonacular MCP Server (npm package)            │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │                 Available Tools                     │    │
+│  │  • get_random_recipes(number, tags, diet)          │    │
+│  │  • search_recipes(query, diet, intolerances)       │    │
+│  │  • get_recipe_information(id, includeNutrition)    │    │
+│  │  • analyze_recipe(ingredients, servings)           │    │
+│  └────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │              Spoonacular API                        │    │
+│  │  • 365,000+ recipes                                │    │
+│  │  • Nutrition data                                  │    │
+│  │  • Dietary restrictions                            │    │
+│  │  • Recipe images                                   │    │
+│  └────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### MCP Communication Flow
+
+**JSON-RPC 2.0 Protocol**:
+
+```javascript
+// 1. Client sends request
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "get_random_recipes",
+    "arguments": {
+      "number": 21,
+      "tags": "vegetarian"
+    }
+  }
+}
+
+// 2. Server processes and responds
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "{\"recipes\": [...]}"  // JSON string
+    }],
+    "isError": false
+  }
+}
+
+// 3. Client parses result
+const recipes = JSON.parse(result.content[0].text);
+```
+
+### MCP Client Implementation
+
+**File**: `server/services/mcpMealPlanningClient.js`
+
+**Key Methods**:
+```javascript
+class MCPMealPlanningClient {
+  // Send JSON-RPC request to MCP server
+  async sendMCPRequest(method, params) {
+    const child = spawn('spoonacular-mcp', [], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { SPOONACULAR_API_KEY: this.apiKey }
+    });
+    
+    child.stdin.write(JSON.stringify(request) + '\n');
+    // Parse response from stdout
+  }
+  
+  // High-level tool wrappers
+  async getRandomRecipes({ number, tags })
+  async getRecipeInformation(id, includeNutrition)
+  async searchRecipes({ query, diet, intolerances })
+  
+  // Meal plan generation
+  async generateMealPlanForEvent(event, tokens, preferences)
+}
+```
+
+### MCP vs Direct API Calls
+
+| Aspect | MCP Approach | Direct API |
+|--------|--------------|------------|
+| **Abstraction** | High-level tools | Low-level HTTP |
+| **Standardization** | JSON-RPC 2.0 protocol | Custom per API |
+| **Composability** | Easy to add more MCP servers | Each API is different |
+| **Maintenance** | Update MCP server independently | Update client code |
+| **Error Handling** | Standardized error format | Custom per API |
+
+**Why We Use MCP for Spoonacular**:
+- ✅ Official npm package (`spoonacular-mcp`)
+- ✅ Well-maintained and documented
+- ✅ Handles API authentication
+- ✅ Structured responses
+- ✅ Easy to swap for other meal planning services
+
+### MCP Error Handling & Fallbacks
+
+```
+1. Try MCP Server (Spoonacular)
+   ├─ Success → Return structured meal plan
+   ├─ API Quota Exceeded (402) → Fallback to LLM
+   ├─ Network Error → Fallback to LLM
+   └─ Parse Error → Fallback to LLM
+   
+2. Try LLM Fallback (GPT-4o-mini)
+   ├─ Success → Return generated meal plan
+   ├─ JSON Parse Error → Simple template
+   └─ LLM Error → Simple template
+   
+3. Simple Template Fallback
+   └─ Always succeeds → Basic meal suggestions
+```
+
+**Reliability**: 3-tier approach ensures users always get a meal plan
+
+### Future MCP Integration Opportunities
+
+**Potential MCP Servers to Add**:
+- **Google Calendar MCP**: Standardized calendar operations
+- **Weather MCP**: Weather data and forecasts
+- **Transportation MCP**: Uber, Lyft, public transit
+- **Document MCP**: Google Docs, Notion, Confluence
+- **Task Management MCP**: Todoist, Asana, Trello
+
+**Benefits of Adding More MCP Servers**:
+- Consistent tool interface for the agent
+- Easy to swap providers (e.g., Uber → Lyft)
+- Community-maintained servers
+- Reduced maintenance burden
 
 ---
 
