@@ -70,7 +70,7 @@ class EventAgent {
     });
 
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-3.5-turbo-0125',
+      model: 'gpt-4o-mini',
       temperature: 0.2,
       max_tokens: 1400,
       messages: [

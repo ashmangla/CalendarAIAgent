@@ -111,7 +111,7 @@ Guidelines:
       });
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: messages,
         temperature: 0.3,
         max_tokens: 500
@@ -193,7 +193,7 @@ Guidelines:
   async generateResponse(responseData) {
     try {
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -229,7 +229,7 @@ Event duration: ${conflictData.duration || 60} minutes
         .join(', ');
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -290,7 +290,7 @@ Prioritize:
         .join(', ');
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

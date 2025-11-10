@@ -749,11 +749,15 @@ function getTaskIdentifier(task) {
     
     return (
       categoryLower.includes('transportation') ||
+      categoryLower.includes('transport') ||
       taskLower.includes('uber') ||
       taskLower.includes('transportation') ||
+      taskLower.includes('transport') ||
       taskLower.includes('ride') ||
       taskLower.includes('travel') ||
+      taskLower.includes('arrange transport') ||
       descriptionLower.includes('uber') ||
+      descriptionLower.includes('arrange transport') ||
       (descriptionLower.includes('book') && descriptionLower.includes('ride'))
     );
   };

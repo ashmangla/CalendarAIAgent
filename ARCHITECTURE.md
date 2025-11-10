@@ -71,8 +71,7 @@ Calendar AI Agent is an intelligent calendar management system that uses AI to a
 ### AI & Machine Learning
 | Service | Purpose | Why Chosen |
 |---------|---------|------------|
-| **OpenAI GPT-4o** | Event analysis, task generation | Most capable model for complex reasoning and structured output |
-| **OpenAI GPT-4o-mini** | Meal planning, voice parsing | Cost-effective for simpler tasks, fast response times |
+| **OpenAI GPT-4o-mini** | Event analysis, task generation, voice parsing, all AI features | Cost-effective, fast, reliable JSON output, 128k context window |
 | **Whisper API** | Voice transcription | Best-in-class accuracy, multilingual support |
 | **Spoonacular API** | Recipe and meal data | Comprehensive recipe database with nutrition info |
 
@@ -162,6 +161,91 @@ Calendar AI Agent is an intelligent calendar management system that uses AI to a
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### High-Level Architecture (Mermaid Diagram)
+
+```mermaid
+graph TB
+    subgraph "Frontend - React SPA"
+        UI[User Interface]
+        CalendarEvents[Calendar Events Component]
+        EventAnalysis[Event Analysis Component]
+        VoiceAssistant[Voice Assistant Component]
+        Wishlist[Wishlist Manager]
+        UberBooking[Uber Booking]
+        GoogleAuth[Google OAuth]
+    end
+
+    subgraph "Backend - Node.js/Express"
+        API[API Routes Layer]
+        
+        subgraph "Core Services"
+            EventAgent[Event Agent<br/>AI Analysis]
+            VoiceAdapter[Voice Adapter<br/>Speech Processing]
+            MCPClient[MCP Client<br/>Meal Planning]
+            DocProcessor[Document Processor<br/>Google Docs]
+            WeatherService[Weather Service]
+            WishlistAnalyzer[Wishlist Analyzer]
+        end
+        
+        subgraph "Data Layer"
+            SessionStore[Session Store<br/>Conversations & Tokens]
+            TaskCache[Task Cache<br/>Remaining Tasks]
+            EventsStore[Events Store<br/>Local Events]
+            WishlistStore[Wishlist Store]
+        end
+        
+        AuthMiddleware[Auth Middleware<br/>Hybrid Auth]
+    end
+
+    subgraph "External Services"
+        OpenAI[OpenAI API<br/>GPT-4o-mini & Whisper]
+        GoogleAPIs[Google APIs<br/>Calendar, Docs, OAuth]
+        WeatherAPI[Weather API<br/>OpenWeatherMap]
+        UberAPI[Uber API<br/>Ride Estimates]
+        SpoonacularMCP[Spoonacular MCP<br/>Recipe & Nutrition]
+    end
+
+    UI --> CalendarEvents
+    UI --> EventAnalysis
+    UI --> VoiceAssistant
+    UI --> Wishlist
+    
+    CalendarEvents -->|HTTP/REST| API
+    EventAnalysis -->|HTTP/REST| API
+    VoiceAssistant -->|HTTP/REST| API
+    Wishlist -->|HTTP/REST| API
+    
+    API --> AuthMiddleware
+    AuthMiddleware --> EventAgent
+    AuthMiddleware --> VoiceAdapter
+    AuthMiddleware --> MCPClient
+    AuthMiddleware --> DocProcessor
+    AuthMiddleware --> WeatherService
+    AuthMiddleware --> WishlistAnalyzer
+    
+    EventAgent --> TaskCache
+    EventAgent --> OpenAI
+    VoiceAdapter --> OpenAI
+    VoiceAdapter --> SessionStore
+    MCPClient --> SpoonacularMCP
+    DocProcessor --> GoogleAPIs
+    WeatherService --> WeatherAPI
+    WishlistAnalyzer --> WishlistStore
+    WishlistAnalyzer --> OpenAI
+    
+    EventAgent --> EventsStore
+    API --> GoogleAPIs
+    UberBooking --> UberAPI
+    GoogleAuth --> GoogleAPIs
+    
+    style EventAgent fill:#e1f5ff
+    style VoiceAdapter fill:#e1f5ff
+    style MCPClient fill:#e1f5ff
+    style OpenAI fill:#ffe1e1
+    style GoogleAPIs fill:#ffe1e1
+    style SpoonacularMCP fill:#ffe1e1
+```
+
 ### Component Architecture
 
 #### Frontend Components
@@ -240,7 +324,7 @@ The Calendar AI Agent follows an **agentic architecture** where the AI system ac
 │                          ↓                                   │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │            LLM Reasoning Layer                      │    │
-│  │  • OpenAI GPT-4o (primary)                         │    │
+│  │  • OpenAI GPT-4o-mini (primary)                    │    │
 │  │  • Context window: 128k tokens                     │    │
 │  │  • Structured output (JSON mode)                   │    │
 │  │  • Function calling for tool use                   │    │
@@ -726,7 +810,7 @@ generateResponse() → Create user-friendly responses
    ↓
 5. EventAgent.analyzeEvent()
    ├─ Build rich prompt with all context
-   ├─ Call OpenAI GPT-4o
+   ├─ Call OpenAI GPT-4o-mini
    └─ Parse structured JSON response
    ↓
 6. Response Processing:
@@ -827,8 +911,7 @@ generateResponse() → Create user-friendly responses
 **Models Used**:
 | Model | Use Case | Why |
 |-------|----------|-----|
-| GPT-4o | Event analysis, complex reasoning | Most capable, structured output |
-| GPT-4o-mini | Meal planning, voice parsing | Fast, cost-effective, good enough |
+| GPT-4o-mini | All AI features: event analysis, task generation, meal planning, voice parsing, document summarization, wishlist analysis | Fast, cost-effective, reliable JSON output, 128k context window |
 | Whisper-1 | Voice transcription | Best accuracy, multilingual |
 
 **Prompt Engineering Principles**:
@@ -845,10 +928,11 @@ generateResponse() → Create user-friendly responses
 - With history: +500-1000 tokens
 
 **Cost Optimization**:
-- Use GPT-4o-mini where possible
-- Cache analysis results
-- Limit conversation history to 4 exchanges
-- Structured output reduces parsing errors
+- Use GPT-4o-mini for all features (cost-effective and performant)
+- Cache analysis results to avoid redundant API calls
+- Limit conversation history to 4 exchanges (8 messages)
+- Structured output (JSON mode) reduces parsing errors
+- Short-lived tokens minimize context window usage
 
 ### Conversation History Design
 
