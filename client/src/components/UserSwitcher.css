@@ -1,0 +1,205 @@
+.user-switcher {
+  position: relative;
+  display: inline-block;
+}
+
+.user-switcher-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.user-switcher-trigger:hover {
+  background: #f5f5f5;
+  border-color: #ccc;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.user-email {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-arrow {
+  font-size: 10px;
+  color: #666;
+}
+
+.user-switcher-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 300px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.dropdown-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+  border-bottom: 1px solid #eee;
+}
+
+.user-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.user-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.user-item:hover {
+  background: #f5f5f5;
+}
+
+.user-item.current {
+  background: #e3f2fd;
+  cursor: default;
+}
+
+.user-item.current:hover {
+  background: #e3f2fd;
+}
+
+.user-item-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.user-item-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.user-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.user-item-name {
+  font-weight: 500;
+  font-size: 14px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-item-email {
+  font-size: 12px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkmark {
+  color: #1976d2;
+  font-size: 18px;
+  font-weight: bold;
+  margin-left: 8px;
+}
+
+.sign-out-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: #999;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 8px;
+}
+
+.sign-out-btn:hover {
+  background: #ff5252;
+  color: white;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #eee;
+  margin: 4px 0;
+}
+
+.dropdown-action {
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.dropdown-action:hover {
+  background: #f5f5f5;
+}
+
+.dropdown-action.add-account {
+  color: #1976d2;
+  font-weight: 500;
+}
+
+.dropdown-action.sign-out-all {
+  color: #d32f2f;
+}
+
+/* Scrollbar styles for user list */
+.user-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.user-list::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.user-list::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 3px;
+}
+
+.user-list::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+

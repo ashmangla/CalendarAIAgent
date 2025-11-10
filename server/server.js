@@ -12,6 +12,7 @@ const voiceRoutes = require('./routes/voice');
 const wishlistRoutes = require('./routes/wishlist');
 const colorClassificationService = require('./services/colorClassificationService');
 const taskCache = require('./services/taskCache');
+const { authMiddleware, optionalAuth } = require('./middleware/authMiddleware');
 
 const app = express();
 
@@ -469,7 +470,7 @@ app.get('/api/calendar/events', (req, res) => {
 });
 
 // Event analysis endpoint
-app.post('/api/analyze-event', async (req, res) => {
+app.post('/api/analyze-event', optionalAuth, async (req, res) => {
   try {
     const { eventId, event, forceReanalyze = false } = req.body;
     
@@ -509,7 +510,8 @@ app.post('/api/analyze-event', async (req, res) => {
     const eventIdentifier = eventToAnalyze.id || eventToAnalyze.eventId;
     const shouldForceReanalyze = Boolean(forceReanalyze);
     const isAlreadyAnalyzed = eventToAnalyze.isAnalyzed || eventToAnalyze.extendedProperties?.private?.isAnalyzed === 'true';
-    const cachedTasks = eventIdentifier ? taskCache.getRemainingTasks(eventIdentifier) : null;
+    const userEmail = req.auth?.userInfo?.email || req.session?.userInfo?.email || null;
+    const cachedTasks = eventIdentifier ? taskCache.getRemainingTasks(eventIdentifier, userEmail) : null;
 
     if (shouldForceReanalyze) {
       let extendedProps = eventToAnalyze.extendedProperties;
@@ -535,7 +537,7 @@ app.post('/api/analyze-event', async (req, res) => {
       };
 
       if (eventIdentifier) {
-        taskCache.clear(eventIdentifier);
+        taskCache.clear(eventIdentifier, userEmail);
       }
     }
 
@@ -595,7 +597,8 @@ app.post('/api/analyze-event', async (req, res) => {
     let analysis;
 
     // Get Google OAuth tokens for document processing (if available)
-    const tokens = req.session?.tokens || null;
+    // Get tokens from authMiddleware (supports both new and legacy auth)
+    const tokens = req.auth?.tokens || req.session?.tokens || null;
     
     // Extract meal plan preferences from request body if provided
     const mealPlanPreferences = req.body.mealPlanPreferences || null;
@@ -660,9 +663,9 @@ app.post('/api/analyze-event', async (req, res) => {
     await refreshWeatherDataForAnalysis(analysis, eventToAnalyze);
     if (eventIdentifier) {
       const tasks = analysis.preparationTasks || [];
-      console.log(`💾 [TaskCache] Storing ${tasks.length} initial tasks for event:`, eventIdentifier);
+      console.log(`💾 [TaskCache] Storing ${tasks.length} initial tasks for event:`, eventIdentifier, 'user:', userEmail);
       console.log(`📋 [TaskCache] Tasks:`, tasks.map(t => t.task || t.title));
-      taskCache.setRemainingTasks(eventIdentifier, tasks);
+      taskCache.setRemainingTasks(eventIdentifier, tasks, userEmail);
     }
 
     const linkedTasks = eventIdentifier ? await getLinkedTasksForEvent(eventIdentifier, req) : [];
@@ -730,10 +733,11 @@ app.post('/api/analyze-event', async (req, res) => {
 });
 
 // Generate meal plan with user preferences
-app.post('/api/generate-meal-plan', async (req, res) => {
+app.post('/api/generate-meal-plan', optionalAuth, async (req, res) => {
   try {
     const { event, preferences } = req.body;
-    const tokens = req.session?.tokens;
+    // Get tokens from authMiddleware (supports both new and legacy auth)
+    const tokens = req.auth?.tokens || req.session?.tokens;
 
     if (!event) {
       return res.status(400).json({
@@ -983,9 +987,10 @@ app.get('/api/event-status/:eventId', (req, res) => {
 });
 
 // Add selected AI tasks as calendar events
-app.post('/api/add-ai-tasks', async (req, res) => {
+app.post('/api/add-ai-tasks', optionalAuth, async (req, res) => {
   try {
     const { selectedTasks, originalEventId } = req.body;
+    const userEmail = req.auth?.userInfo?.email || req.session?.userInfo?.email || null;
     
     if (!selectedTasks || !Array.isArray(selectedTasks) || selectedTasks.length === 0) {
       return res.status(400).json({
@@ -1218,11 +1223,11 @@ app.post('/api/add-ai-tasks', async (req, res) => {
     }
 
     if (originalEventId) {
-      console.log(`✅ [TaskCache] Marking ${selectedTasks.length} tasks as completed for event:`, originalEventId);
+      console.log(`✅ [TaskCache] Marking ${selectedTasks.length} tasks as completed for event:`, originalEventId, 'user:', userEmail);
       console.log(`📋 [TaskCache] Tasks being marked:`, selectedTasks.map(t => t.task || t.title));
-      taskCache.markTasksCompleted(originalEventId, selectedTasks);
+      taskCache.markTasksCompleted(originalEventId, selectedTasks, userEmail);
       
-      const remaining = taskCache.getRemainingTasks(originalEventId) || [];
+      const remaining = taskCache.getRemainingTasks(originalEventId, userEmail) || [];
       console.log(`📋 [TaskCache] After marking, remaining tasks:`, {
         count: remaining.length,
         tasks: remaining.map(t => t.task || t.title)
@@ -1253,7 +1258,7 @@ app.post('/api/add-ai-tasks', async (req, res) => {
 });
 
 // Get linked AI-generated tasks for an event
-app.post('/api/get-linked-tasks', async (req, res) => {
+app.post('/api/get-linked-tasks', optionalAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
 
@@ -1282,9 +1287,10 @@ app.post('/api/get-linked-tasks', async (req, res) => {
   }
 });
 
-app.post('/api/get-remaining-tasks', (req, res) => {
+app.post('/api/get-remaining-tasks', optionalAuth, (req, res) => {
   try {
     const { eventId } = req.body;
+    const userEmail = req.auth?.userInfo?.email || req.session?.userInfo?.email || null;
 
     if (!eventId) {
       return res.status(400).json({
@@ -1293,7 +1299,7 @@ app.post('/api/get-remaining-tasks', (req, res) => {
       });
     }
 
-    const remainingTasks = taskCache.getRemainingTasks(eventId) || [];
+    const remainingTasks = taskCache.getRemainingTasks(eventId, userEmail) || [];
     console.log(`📋 [TaskCache] Get remaining tasks for ${eventId}:`, {
       count: remainingTasks.length,
       tasks: remainingTasks.map(t => t.task || t.title)

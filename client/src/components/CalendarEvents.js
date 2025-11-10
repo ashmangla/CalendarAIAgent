@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import authService from '../services/authService';
 import EventAnalysis from './EventAnalysis';
 import EventDetails from './EventDetails';
 import GoogleAuth from './GoogleAuth';
@@ -260,9 +261,10 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
     console.log('Checking for OAuth callback in URL:', window.location.href);
     const urlParams = new URLSearchParams(window.location.search);
     const authParam = urlParams.get('auth');
+    const authData = urlParams.get('data');
     const errorParam = urlParams.get('error');
 
-    console.log('URL params - auth:', authParam, 'error:', errorParam);
+    console.log('URL params - auth:', authParam, 'error:', errorParam, 'hasData:', !!authData);
 
     if (errorParam) {
       console.error('OAuth error:', errorParam);
@@ -270,16 +272,86 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
       setShowAuthModal(false);
       // Clean URL
       window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (authParam === 'success') {
-      console.log('Auth success, fetching session...');
+    } else if (authParam === 'success' && authData) {
+      console.log('Auth success, storing auth data in localStorage...');
 
-      // Fetch session data from server
+      try {
+        // Decode auth data from URL parameter (base64 encoded)
+        const decoded = JSON.parse(atob(authData));
+        const { tokens, userInfo } = decoded;
+
+        console.log('Decoded auth data for:', userInfo.email);
+
+        // Store in localStorage using authService
+        authService.storeUserAuth(userInfo.email, tokens, userInfo);
+
+        // Set local state
+        setUserInfo({
+          email: userInfo.email,
+          name: userInfo.name,
+          imageUrl: userInfo.picture,
+          tokens: tokens
+        });
+        setIsGoogleConnected(true);
+        setShowAuthModal(false);
+
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (decodeError) {
+        console.error('Error decoding auth data:', decodeError);
+        
+        // Fallback: Try to fetch from session for backward compatibility
+        console.log('Falling back to session fetch...');
+        axios.get('/api/google-calendar/session', {
+          withCredentials: true
+        })
+        .then(response => {
+          if (response.data.success && response.data.isAuthenticated) {
+            console.log('Session data received:', response.data.userInfo);
+            
+            // Store in localStorage
+            authService.storeUserAuth(
+              response.data.userInfo.email,
+              response.data.tokens,
+              response.data.userInfo
+            );
+            
+            setUserInfo({
+              email: response.data.userInfo.email,
+              name: response.data.userInfo.name,
+              imageUrl: response.data.userInfo.picture,
+              tokens: response.data.tokens
+            });
+            setIsGoogleConnected(true);
+            setShowAuthModal(false);
+
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching session after auth:', error);
+          setError('Failed to complete authentication');
+        });
+      }
+    } else if (authParam === 'success') {
+      // Backward compatibility: auth success without data parameter
+      console.log('Auth success (legacy mode), fetching session...');
+      
       axios.get('/api/google-calendar/session', {
         withCredentials: true
       })
       .then(response => {
         if (response.data.success && response.data.isAuthenticated) {
           console.log('Session data received:', response.data.userInfo);
+          
+          // Store in localStorage
+          authService.storeUserAuth(
+            response.data.userInfo.email,
+            response.data.tokens,
+            response.data.userInfo
+          );
+          
           setUserInfo({
             email: response.data.userInfo.email,
             name: response.data.userInfo.name,

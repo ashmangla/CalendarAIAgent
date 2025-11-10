@@ -5,6 +5,7 @@ const WishlistAnalyzer = require('../services/wishlistAnalyzer');
 const calendarConflictService = require('../services/calendarConflictService');
 const { google } = require('googleapis');
 const crypto = require('crypto');
+const { optionalAuth } = require('../middleware/authMiddleware');
 
 let wishlistAnalyzer;
 try {
@@ -219,7 +220,7 @@ router.post('/find-time', async (req, res) => {
   }
 });
 
-router.post('/items/:id/suggestions', async (req, res) => {
+router.post('/items/:id/suggestions', optionalAuth, async (req, res) => {
   try {
     if (!wishlistAnalyzer) {
       return res.status(503).json({
@@ -229,7 +230,8 @@ router.post('/items/:id/suggestions', async (req, res) => {
     }
 
     const { id } = req.params;
-    const tokens = req.session?.tokens;
+    // Get tokens from authMiddleware (supports both new and legacy auth)
+    const tokens = req.auth?.tokens || req.session?.tokens;
 
     if (!tokens || !tokens.access_token) {
       return res.status(401).json({

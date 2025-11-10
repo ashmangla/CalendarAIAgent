@@ -38,22 +38,50 @@ const taskKey = (task) => {
 class TaskCache {
   constructor() {
     /**
-     * Map<eventId, { remainingTasks: Array, completedTaskKeys: Set<string>, createdAt: number, updatedAt: number }>
+     * Map<cacheKey, { remainingTasks: Array, completedTaskKeys: Set<string>, createdAt: number, updatedAt: number }>
+     * cacheKey format: "userId:eventId" or just "eventId" for backward compatibility
      */
     this.cache = new Map();
+  }
+
+  /**
+   * Generate cache key from user email and event ID
+   * @param {string} eventId
+   * @param {string} userEmail - Optional user email for multi-user support
+   * @returns {string}
+   */
+  #getCacheKey(eventId, userEmail = null) {
+    if (!eventId) {
+      return null;
+    }
+    
+    const eventKey = String(eventId);
+    
+    // If userEmail is provided, scope by user
+    if (userEmail) {
+      return `${userEmail}:${eventKey}`;
+    }
+    
+    // Otherwise, use just eventId for backward compatibility
+    return eventKey;
   }
 
   /**
    * Initialize or refresh the remaining tasks list for an event.
    * @param {string} eventId
    * @param {Array<object>} preparationTasks
+   * @param {string} userEmail - Optional user email for multi-user support
    */
-  setRemainingTasks(eventId, preparationTasks = []) {
+  setRemainingTasks(eventId, preparationTasks = [], userEmail = null) {
     if (!eventId) {
       return;
     }
 
-    const key = String(eventId);
+    const key = this.#getCacheKey(eventId, userEmail);
+    if (!key) {
+      return;
+    }
+
     const entry = this.cache.get(key);
     const clonedTasks = deepCloneTasks(preparationTasks);
 
@@ -77,14 +105,19 @@ class TaskCache {
   /**
    * Return a cloned array of remaining tasks for the event.
    * @param {string} eventId
+   * @param {string} userEmail - Optional user email for multi-user support
    * @returns {Array<object>|null}
    */
-  getRemainingTasks(eventId) {
+  getRemainingTasks(eventId, userEmail = null) {
     if (!eventId) {
       return null;
     }
 
-    const key = String(eventId);
+    const key = this.#getCacheKey(eventId, userEmail);
+    if (!key) {
+      return null;
+    }
+
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -98,13 +131,18 @@ class TaskCache {
    * Mark tasks as scheduled so they no longer show in the remaining list.
    * @param {string} eventId
    * @param {Array<object>} tasks
+   * @param {string} userEmail - Optional user email for multi-user support
    */
-  markTasksCompleted(eventId, tasks = []) {
+  markTasksCompleted(eventId, tasks = [], userEmail = null) {
     if (!eventId || !Array.isArray(tasks) || tasks.length === 0) {
       return;
     }
 
-    const key = String(eventId);
+    const key = this.#getCacheKey(eventId, userEmail);
+    if (!key) {
+      return;
+    }
+
     let entry = this.cache.get(key);
 
     if (!entry) {
@@ -135,10 +173,15 @@ class TaskCache {
   /**
    * How many tasks remain unscheduled for the event.
    * @param {string} eventId
+   * @param {string} userEmail - Optional user email for multi-user support
    * @returns {number}
    */
-  getRemainingCount(eventId) {
-    const key = String(eventId);
+  getRemainingCount(eventId, userEmail = null) {
+    const key = this.#getCacheKey(eventId, userEmail);
+    if (!key) {
+      return 0;
+    }
+
     const entry = this.cache.get(key);
     return entry ? entry.remainingTasks.length : 0;
   }
@@ -146,13 +189,17 @@ class TaskCache {
   /**
    * Remove cached data for a specific event.
    * @param {string} eventId
+   * @param {string} userEmail - Optional user email for multi-user support
    */
-  clear(eventId) {
+  clear(eventId, userEmail = null) {
     if (!eventId) {
       return;
     }
 
-    this.cache.delete(String(eventId));
+    const key = this.#getCacheKey(eventId, userEmail);
+    if (key) {
+      this.cache.delete(key);
+    }
   }
 
   /**

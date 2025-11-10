@@ -1,9 +1,12 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import axios from 'axios';
 import './App.css';
+import './services/axiosConfig'; // Import axios configuration (sets up interceptors)
+import authService from './services/authService';
+import axios from 'axios';
 import CalendarEvents from './components/CalendarEvents';
 import Wishlist from './components/Wishlist';
 import VoiceAssistant from './components/VoiceAssistant';
+import UserSwitcher from './components/UserSwitcher';
 import logo from './images/Logo.png';
 
 function App() {
@@ -98,6 +101,42 @@ function App() {
     }
   }, []);
 
+  // Initialize from localStorage on mount
+  useEffect(() => {
+    console.log('🔄 Initializing auth from localStorage...');
+    const currentUser = authService.getCurrentUser();
+    
+    if (currentUser && currentUser.userInfo) {
+      console.log('✅ Found stored user:', currentUser.userInfo.email);
+      
+      // Set user info from localStorage
+      setUserInfo({
+        name: currentUser.userInfo.name,
+        email: currentUser.userInfo.email,
+        imageUrl: currentUser.userInfo.picture,
+        verified_email: currentUser.userInfo.verified_email
+      });
+      setIsGoogleConnected(true);
+    } else {
+      console.log('ℹ️  No stored user found');
+    }
+
+    // Listen for token expiration events
+    const handleTokenExpired = (event) => {
+      console.warn('⚠️  Token expired for user:', event.detail.userEmail);
+      // User will need to re-authenticate
+      setUserInfo(null);
+      setIsGoogleConnected(false);
+      alert('Your session has expired. Please sign in again.');
+    };
+
+    window.addEventListener('auth:token-expired', handleTokenExpired);
+    
+    return () => {
+      window.removeEventListener('auth:token-expired', handleTokenExpired);
+    };
+  }, []);
+
   // Fetch events and wishlist when voice assistant is opened (if not already loaded)
   useEffect(() => {
     if (showVoiceAssistant) {
@@ -109,6 +148,21 @@ function App() {
       }
     }
   }, [showVoiceAssistant, fetchEventsForVoice, fetchWishlistForVoice]);
+
+  // Handlers for UserSwitcher
+  const handleUserSwitch = (newUserEmail) => {
+    console.log('👤 User switched to:', newUserEmail);
+    // Page will reload after switch
+  };
+
+  const handleAddAccount = () => {
+    console.log('➕ Adding new account...');
+    // Trigger OAuth flow (will be handled by CalendarEvents component)
+    if (disconnectHandler) {
+      // This will trigger the connect flow
+      setActiveTab('calendar');
+    }
+  };
 
   return (
     <div className="App">
@@ -136,9 +190,15 @@ function App() {
               </button>
             )}
             {isGoogleConnected && userInfo && (
-              <div className="google-user-info-header">
-                <img
-                  src={userInfo.imageUrl}
+              <>
+                <UserSwitcher
+                  currentUserEmail={userInfo.email}
+                  onUserSwitch={handleUserSwitch}
+                  onAddAccount={handleAddAccount}
+                />
+                <div className="google-user-info-header">
+                  <img
+                    src={userInfo.imageUrl}
                   alt={userInfo.name}
                   className="user-avatar-header"
                 />
@@ -154,6 +214,7 @@ function App() {
                   Sign Out
                 </button>
               </div>
+              </>
             )}
           </div>
         </div>

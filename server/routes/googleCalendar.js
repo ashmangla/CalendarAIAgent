@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { google } = require('googleapis');
+const { authMiddleware, requireAuth } = require('../middleware/authMiddleware');
 
 // Google OAuth2 client
 let oauth2Client;
@@ -67,9 +68,7 @@ router.get('/callback', async (req, res) => {
     const userInfoResponse = await oauth2.userinfo.get();
     const userInfo = userInfoResponse.data;
 
-    // Store tokens and user info in session (expires in 3 days)
-    req.session.tokens = tokens;
-    req.session.userInfo = {
+    const formattedUserInfo = {
       id: userInfo.id,
       email: userInfo.email,
       name: userInfo.name,
@@ -77,15 +76,26 @@ router.get('/callback', async (req, res) => {
       verified_email: userInfo.verified_email
     };
 
-    // Save session and redirect
+    // Store tokens and user info in session for backward compatibility
+    req.session.tokens = tokens;
+    req.session.userInfo = formattedUserInfo;
+
+    // Save session and redirect with tokens in URL params
     req.session.save((err) => {
       if (err) {
         console.error('Error saving session:', err);
         return res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?error=session_failed`);
       }
 
-      // Redirect back to client with success indicator
-      res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?auth=success`);
+      // NEW: Encode tokens and userInfo to pass to client for localStorage storage
+      // This enables the client to store auth data without relying on session
+      const authData = Buffer.from(JSON.stringify({
+        tokens,
+        userInfo: formattedUserInfo
+      })).toString('base64');
+
+      // Redirect back to client with success indicator and auth data
+      res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}?auth=success&data=${authData}`);
     });
   } catch (error) {
     console.error('Error in OAuth callback:', error);
@@ -94,9 +104,10 @@ router.get('/callback', async (req, res) => {
 });
 
 // Fetch calendar events
-router.post('/events', async (req, res) => {
+router.post('/events', authMiddleware, async (req, res) => {
   try {
-    const { tokens } = req.body;
+    // Use tokens from authMiddleware (supports both new and legacy auth)
+    const tokens = req.auth?.tokens || req.body.tokens;
     
     if (!tokens) {
       return res.status(400).json({
@@ -271,9 +282,9 @@ router.post('/events', async (req, res) => {
 });
 
 // Get user information
-router.post('/user-info', async (req, res) => {
+router.post('/user-info', authMiddleware, async (req, res) => {
   try {
-    const { tokens } = req.body;
+    const tokens = req.auth?.tokens || req.body.tokens;
     
     if (!tokens) {
       return res.status(400).json({
@@ -309,7 +320,7 @@ router.post('/user-info', async (req, res) => {
 });
 
 // Revoke tokens (sign out)
-router.post('/revoke', async (req, res) => {
+router.post('/revoke', authMiddleware, async (req, res) => {
   try {
     const { tokens } = req.body;
     
@@ -342,6 +353,7 @@ router.post('/revoke', async (req, res) => {
 // Refresh access token
 router.post('/refresh-token', async (req, res) => {
   try {
+    // Refresh endpoint accepts tokens directly in body (no auth middleware needed)
     const { tokens } = req.body;
 
     if (!tokens || !tokens.refresh_token) {
@@ -367,6 +379,31 @@ router.post('/refresh-token', async (req, res) => {
     });
   } catch (error) {
     console.error('Error refreshing token:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Verify token validity (without making external API calls)
+router.post('/verify-token', authMiddleware, (req, res) => {
+  try {
+    if (req.auth && req.auth.tokens) {
+      res.json({
+        success: true,
+        valid: true,
+        userInfo: req.auth.userInfo,
+        source: req.auth.source
+      });
+    } else {
+      res.json({
+        success: true,
+        valid: false
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying token:', error);
     res.status(500).json({
       success: false,
       error: error.message
