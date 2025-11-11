@@ -5,6 +5,7 @@ const calendarConflictService = require('../services/calendarConflictService');
 const eventsStore = require('../services/eventsStore');
 const wishlistStore = require('../services/wishlistStore');
 const { getTranscriptionService } = require('../services/voice/transcriptionService');
+const conversationSummarizer = require('../services/voice/conversationSummarizer');
 
 function generateConversationId() {
   return `conv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -180,6 +181,7 @@ router.post('/process', async (req, res) => {
       currentDate: new Date().toISOString().split('T')[0],
       conversationHistory: conversationHistory,
       followUpCount: followUpCount,
+      summary: conversation?.summary || null,
       ...context
     });
 
@@ -229,12 +231,44 @@ router.post('/process', async (req, res) => {
       { role: 'assistant', content: aiResponse }
     ];
     
-    // Keep only last 4 exchanges (8 messages total)
-    const trimmedHistory = newHistory.slice(-8);
-    
-    // Save updated history to conversation
+    // Save updated history to conversation with summarization
     if (conversation) {
-      conversation.conversationHistory = trimmedHistory;
+      const lastSummarizedAt = conversation.lastSummarizedAt || 0;
+      
+      // Check if we should summarize
+      if (conversationSummarizer.shouldSummarize(newHistory.length, lastSummarizedAt)) {
+        console.log('📝 [Voice] Triggering summarization at', newHistory.length, 'messages');
+        
+        try {
+          // Get messages to summarize and keep
+          const { toSummarize, toKeep } = conversationSummarizer.getMessagesToSummarize(
+            newHistory,
+            lastSummarizedAt
+          );
+          
+          // Generate summary
+          const existingSummary = conversation.summary || null;
+          const newSummary = await conversationSummarizer.summarizeConversation(
+            toSummarize,
+            existingSummary
+          );
+          
+          // Update conversation with summary and recent history
+          conversation.summary = newSummary;
+          conversation.conversationHistory = toKeep;
+          conversation.lastSummarizedAt = newHistory.length;
+          
+          console.log('✅ [Voice] Summarized', toSummarize.length, 'messages, keeping', toKeep.length);
+        } catch (error) {
+          console.error('❌ [Voice] Summarization failed:', error.message);
+          // Fallback: keep last 8 messages without summary
+          conversation.conversationHistory = newHistory.slice(-8);
+        }
+      } else {
+        // No summarization needed yet, keep all history
+        conversation.conversationHistory = newHistory;
+      }
+      
       conversation.followUpCount = followUpCount;
       saveConversation(req, conversationId, conversation);
     }
@@ -252,9 +286,9 @@ router.post('/process', async (req, res) => {
       readyToProcess: intentResult.readyToProcess !== false,
       abort: intentResult.abort || false,
       abortMessage: intentResult.abortMessage || null,
-      conversationHistory: trimmedHistory,
+      conversationHistory: conversation?.conversationHistory || [],
       conversationId: conversationId,
-      historyLength: Math.floor(trimmedHistory.length / 2)
+      historyLength: Math.floor((conversation?.conversationHistory?.length || 0) / 2)
     });
   } catch (error) {
     console.error('Error processing voice input:', error);
@@ -756,9 +790,9 @@ router.post('/create-event', async (req, res) => {
       location: eventDetails.location
     });
 
-    if (conversationId) {
-      clearConversation(req, conversationId);
-    }
+    // Don't clear conversation after event creation - let it persist for follow-ups
+    // User can explicitly end session when done with voice mode
+    console.log('✅ [Voice] Event created, keeping conversation active for follow-ups');
 
     res.json({
       success: true,
@@ -1013,6 +1047,31 @@ router.post('/conversation/clear', (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to clear conversation'
+    });
+  }
+});
+
+/**
+ * End voice session - clear conversation when user exits voice mode
+ */
+router.post('/end-session', (req, res) => {
+  try {
+    const { conversationId } = req.body;
+
+    if (conversationId) {
+      console.log('🔚 [Voice] Ending session, clearing conversation:', conversationId);
+      clearConversation(req, conversationId);
+    }
+
+    res.json({
+      success: true,
+      message: 'Voice session ended'
+    });
+  } catch (error) {
+    console.error('Error ending voice session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to end session'
     });
   }
 });

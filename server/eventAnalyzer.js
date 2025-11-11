@@ -1,6 +1,8 @@
 const weatherService = require('./services/weatherService');
 const documentProcessor = require('./services/documentProcessor');
 const EventAgent = require('./services/eventAgent');
+const { findFreeSlots } = require('./services/calendarUtils');
+const { google } = require('googleapis');
 
 class CalendarEventAnalyzer {
   constructor() {
@@ -10,6 +12,7 @@ class CalendarEventAnalyzer {
   async analyzeEvent(event, tokens = null, options = {}) {
     const { weatherData, weatherSuggestions } = await this.#fetchWeatherContext(event);
     const documentContext = await this.#fetchDocumentContext(event, tokens);
+    const freeSlots = await this.#fetchCalendarSlots(event, tokens, options);
     const { 
       shouldAttemptMealPlan: shouldAttemptMealPlanPref = false,
       mealPlanPreferences = null
@@ -31,7 +34,8 @@ class CalendarEventAnalyzer {
         })),
         wishlistContext: null,
         shouldAttemptMealPlan: shouldAttemptMealPlanPref,
-        mealPlanPreferences: mealPlanPreferences
+        mealPlanPreferences: mealPlanPreferences,
+        freeSlots: freeSlots
       });
 
       const analysis = this.parseOpenAIResponse(responseText);
@@ -226,6 +230,78 @@ class CalendarEventAnalyzer {
     }
   }
 
+  /**
+   * Fetch calendar free slots for calendar-aware scheduling
+   * @param {Object} event - The event being analyzed
+   * @param {Object} tokens - Google OAuth tokens
+   * @param {Object} options - Options including checkAvailability flag
+   * @returns {Array|null} Array of free slots or null if unavailable
+   */
+  async #fetchCalendarSlots(event, tokens, options = {}) {
+    // Check if calendar checking is enabled (default: true)
+    if (options.checkAvailability === false) {
+      return null;
+    }
+
+    // Require tokens for calendar access
+    if (!tokens?.access_token) {
+      console.log('ℹ️  [Calendar Slots] No tokens available, skipping calendar check');
+      return null;
+    }
+
+    // Require event date
+    if (!event.date) {
+      console.log('ℹ️  [Calendar Slots] No event date, skipping calendar check');
+      return null;
+    }
+
+    try {
+      const oauth2Client = new google.auth.OAuth2();
+      oauth2Client.setCredentials(tokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      const now = new Date();
+      const eventDate = new Date(event.date);
+      
+      // Only check if event is in the future
+      if (eventDate <= now) {
+        console.log('ℹ️  [Calendar Slots] Event is in the past, skipping calendar check');
+        return null;
+      }
+      
+      console.log(`📅 [Calendar Slots] Fetching events between now and ${eventDate.toISOString()}`);
+      
+      // Fetch events between now and event date
+      const response = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: now.toISOString(),
+        timeMax: eventDate.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 250
+      });
+      
+      // Normalize calendar events
+      const calendarEvents = response.data.items.map(e => ({
+        date: e.start?.dateTime || e.start?.date,
+        endDate: e.end?.dateTime || e.end?.date,
+        title: e.summary || 'Untitled'
+      })).filter(e => e.date); // Filter out events without dates
+      
+      // Find free slots
+      const freeSlots = findFreeSlots(calendarEvents, now, eventDate, {
+        minDuration: 60 // 1 hour minimum for preparation tasks
+      });
+      
+      console.log(`✅ [Calendar Slots] Found ${freeSlots.length} free slots between now and event`);
+      
+      return freeSlots.length > 0 ? freeSlots : null;
+    } catch (error) {
+      console.warn('⚠️  [Calendar Slots] Could not check calendar availability:', error.message);
+      // Gracefully continue without slots - never fail the analysis
+      return null;
+    }
+  }
 
 }
 

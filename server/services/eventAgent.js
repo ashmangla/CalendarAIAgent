@@ -150,7 +150,8 @@ MEAL PLAN GUIDANCE:
     mealPlanResult,
     mealPlanError,
     mealPlanFallback,
-    shouldAttemptMealPlan
+    shouldAttemptMealPlan,
+    freeSlots
   }) {
     const lines = [];
     lines.push(`Analyze this calendar event:`);
@@ -185,6 +186,20 @@ MEAL PLAN GUIDANCE:
       wishlistContext.forEach(entry => {
         lines.push(`- ${entry}`);
       });
+    }
+
+    // Add free slots if available
+    if (freeSlots && freeSlots.length > 0) {
+      lines.push('\nAvailable Free Time Slots (between now and event):');
+      freeSlots.slice(0, 10).forEach((slot, idx) => {
+        const startTime = new Date(slot.startTime);
+        const endTime = new Date(slot.endTime);
+        const dateStr = startTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const timeStr = startTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const duration = Math.round(slot.duration / 60); // Convert to hours
+        lines.push(`  ${idx + 1}. ${dateStr} at ${timeStr} (${duration}h available)`);
+      });
+      lines.push('\nWhen suggesting task times, prefer these free slots to avoid calendar conflicts.');
     }
 
     if (tokens?.access_token) {

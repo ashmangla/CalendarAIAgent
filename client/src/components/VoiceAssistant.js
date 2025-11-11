@@ -46,6 +46,24 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
     }
   }, [updateConversationId]);
 
+  const endSession = useCallback(async () => {
+    if (!conversationIdRef.current) {
+      updateConversationId(null);
+      return;
+    }
+
+    try {
+      console.log('🔚 [Voice] Ending session:', conversationIdRef.current);
+      await axios.post('/api/voice/end-session', {
+        conversationId: conversationIdRef.current
+      });
+    } catch (error) {
+      console.error('Error ending voice session:', error);
+    } finally {
+      updateConversationId(null);
+    }
+  }, [updateConversationId]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -731,7 +749,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
           {onClose && (
             <button
               onClick={() => {
-                clearConversation();
+                endSession();
                 onClose();
               }}
               className="voice-close-btn"

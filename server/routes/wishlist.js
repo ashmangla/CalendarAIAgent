@@ -5,6 +5,7 @@ const WishlistAnalyzer = require('../services/wishlistAnalyzer');
 const calendarConflictService = require('../services/calendarConflictService');
 const { google } = require('googleapis');
 const crypto = require('crypto');
+const { findFreeSlots } = require('../services/calendarUtils');
 
 let wishlistAnalyzer;
 try {
@@ -478,72 +479,6 @@ router.post('/analyze-item', async (req, res) => {
     });
   }
 });
-
-/**
- * Helper function to find free slots in calendar
- */
-function findFreeSlots(events, daysToCheck = 14) {
-  const freeSlots = [];
-  const now = new Date();
-  const endDate = new Date(now);
-  endDate.setDate(endDate.getDate() + daysToCheck);
-
-  // Normalize events to have consistent date/time format
-  const normalizedEvents = events.map(event => {
-    const date = new Date(event.date);
-    const endDate = event.endDate ? new Date(event.endDate) : new Date(date.getTime() + 60 * 60 * 1000); // Default 1 hour
-    return {
-      start: date,
-      end: endDate,
-      title: event.title
-    };
-  }).filter(e => e.start && !isNaN(e.start.getTime()) && e.start >= now);
-
-  // Sort events by start time
-  normalizedEvents.sort((a, b) => a.start - b.start);
-
-  // Start from now, find gaps between events
-  let currentTime = new Date(now);
-  currentTime.setMinutes(0, 0, 0); // Round to hour
-
-  normalizedEvents.forEach(event => {
-    // If there's a gap before this event
-    if (currentTime < event.start) {
-      const gapDuration = (event.start - currentTime) / (1000 * 60); // minutes
-      
-      // Only consider gaps of 2+ hours
-      if (gapDuration >= 120) {
-        freeSlots.push({
-          startTime: currentTime.toISOString(),
-          endTime: event.start.toISOString(),
-          duration: gapDuration,
-          date: currentTime.toISOString().split('T')[0]
-        });
-      }
-    }
-    
-    // Move current time to end of this event
-    currentTime = new Date(event.end);
-    // Round up to next hour for cleaner slots
-    currentTime.setMinutes(0, 0, 0);
-    currentTime.setHours(currentTime.getHours() + 1);
-  });
-
-  // Check for free slot at end of period
-  if (currentTime < endDate) {
-    const gapDuration = (endDate - currentTime) / (1000 * 60);
-    if (gapDuration >= 120) {
-      freeSlots.push({
-        startTime: currentTime.toISOString(),
-        endTime: endDate.toISOString(),
-        duration: gapDuration,
-        date: currentTime.toISOString().split('T')[0]
-      });
-    }
-  }
-
-  return freeSlots;
-}
 
 module.exports = router;
 

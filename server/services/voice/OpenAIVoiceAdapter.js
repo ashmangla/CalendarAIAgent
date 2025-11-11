@@ -96,6 +96,15 @@ Guidelines:
         }
       ];
 
+      // Add conversation summary if available (for context beyond recent history)
+      if (context.summary) {
+        messages.push({
+          role: 'system',
+          content: `Previous conversation context: ${context.summary}`
+        });
+        console.log('📝 [Voice Adapter] Including conversation summary in context');
+      }
+
       // Add conversation history
       conversationHistory.forEach(msg => {
         messages.push({
