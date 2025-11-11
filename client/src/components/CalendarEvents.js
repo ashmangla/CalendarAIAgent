@@ -502,7 +502,11 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
             console.warn('Invalid event date:', event);
             return; // Skip invalid dates
           }
-          const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          // Use local timezone to extract date, not UTC
+          const year = eventDate.getFullYear();
+          const month = String(eventDate.getMonth() + 1).padStart(2, '0');
+          const day = String(eventDate.getDate()).padStart(2, '0');
+          const dateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format in local timezone
           
           if (!grouped[dateKey]) {
             grouped[dateKey] = [];
