@@ -308,8 +308,20 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       mediaRecorderRef.current.stop();
     }
 
+    // Clear all timeouts to prevent auto-restart
     if (autoStopTimeoutRef.current) {
       clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = null;
+    }
+
+    if (autoListenTimeoutRef.current) {
+      clearTimeout(autoListenTimeoutRef.current);
+      autoListenTimeoutRef.current = null;
+    }
+
+    // Stop any ongoing speech synthesis
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
     }
 
     if (!preserveContext) {
@@ -317,6 +329,10 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       setFollowUpCount(0);
       setConversationHistory([]);
     }
+
+    // Reset status to idle
+    setStatus('idle');
+    setIsListening(false);
   };
 
   const handleVoiceInput = async (transcriptText) => {
@@ -366,6 +382,7 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
           setIsInFollowUpLoop(false);
           setFollowUpCount(0);
           setConversationHistory([]);
+          setStatus('idle');
         });
         await clearConversation();
         return;
@@ -405,7 +422,9 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
             message: `I understand you want to ${intent.replace('_', ' ')}, but I can currently help with adding or deleting events, or managing wishlist items.`
           });
           setResponse(responseText);
-          speak(responseText);
+          speak(responseText, () => {
+            setStatus('idle');
+          });
         }
         // Reset conversation state after processing
         setIsInFollowUpLoop(false);
@@ -587,7 +606,9 @@ const VoiceAssistant = ({ onEventAdded, userInfo, existingEvents, existingWishli
       if (!matchingEvent) {
         const errorMsg = "I couldn't find a matching event to delete. Could you provide more details?";
         setResponse(errorMsg);
-        speak(errorMsg);
+        speak(errorMsg, () => {
+          setStatus('idle');
+        });
         return;
       }
 

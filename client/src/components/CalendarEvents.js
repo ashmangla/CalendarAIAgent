@@ -497,16 +497,24 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
       .filter(event => event && event.date) // Filter out null/undefined events
       .forEach(event => {
         try {
-          const eventDate = new Date(event.date);
-          if (isNaN(eventDate.getTime())) {
-            console.warn('Invalid event date:', event);
-            return; // Skip invalid dates
+          let dateKey;
+          
+          // Check if this is an all-day event (date only, no time component)
+          if (event.allDay || (typeof event.date === 'string' && !event.date.includes('T'))) {
+            // For all-day events, use the date string directly to avoid timezone issues
+            dateKey = event.date; // Already in YYYY-MM-DD format
+          } else {
+            // For timed events, parse and extract date in local timezone
+            const eventDate = new Date(event.date);
+            if (isNaN(eventDate.getTime())) {
+              console.warn('Invalid event date:', event);
+              return; // Skip invalid dates
+            }
+            const year = eventDate.getFullYear();
+            const month = String(eventDate.getMonth() + 1).padStart(2, '0');
+            const day = String(eventDate.getDate()).padStart(2, '0');
+            dateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format in local timezone
           }
-          // Use local timezone to extract date, not UTC
-          const year = eventDate.getFullYear();
-          const month = String(eventDate.getMonth() + 1).padStart(2, '0');
-          const day = String(eventDate.getDate()).padStart(2, '0');
-          const dateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format in local timezone
           
           if (!grouped[dateKey]) {
             grouped[dateKey] = [];
@@ -564,7 +572,11 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
 
   const getEventsForDate = (date) => {
     if (!date) return [];
-    const dateKey = date.toISOString().split('T')[0];
+    // Use local timezone to match groupEventsByDate
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dateKey = `${year}-${month}-${day}`;
     const groupedEvents = groupEventsByDate();
     return groupedEvents[dateKey] || [];
   };
@@ -952,7 +964,8 @@ const CalendarEvents = ({ onUserInfoChange, onDisconnectRequest, onRefreshEvents
             </div>
             <div className="calendar-days">
               {generateCalendarGrid().map((date, index) => {
-                const dateKey = date ? date.toISOString().split('T')[0] : null;
+                // Use local timezone to match groupEventsByDate
+                const dateKey = date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` : null;
                 const isSelectedDay = selectedEventDateKey && dateKey === selectedEventDateKey;
                 return (
                 <div 

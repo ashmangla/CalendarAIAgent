@@ -648,7 +648,11 @@ router.post('/create-event', async (req, res) => {
           error: 'Invalid date format. Expected YYYY-MM-DD format.'
         });
       }
-      normalizedDate = dateObj.toISOString().split('T')[0];
+      // Use local timezone to avoid date shifting
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      normalizedDate = `${year}-${month}-${day}`;
     }
     
     eventDetails.time = eventTime;
