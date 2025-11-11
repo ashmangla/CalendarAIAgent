@@ -296,40 +296,43 @@ The Calendar AI Agent follows an **agentic architecture** where the AI system ac
 
 ### Agent Design Pattern
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Event Agent (Orchestrator)                │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │            Agent Decision Layer                     │    │
-│  │  • Analyze event context                           │    │
-│  │  • Determine required tools/services               │    │
-│  │  • Coordinate parallel tool execution              │    │
-│  │  • Synthesize results into actionable tasks        │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          ↓                                   │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │            Tool/Service Layer                       │    │
-│  │                                                     │    │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐        │    │
-│  │  │ Weather  │  │ Google   │  │   MCP    │        │    │
-│  │  │ Service  │  │  Docs    │  │  Tools   │        │    │
-│  │  └──────────┘  └──────────┘  └──────────┘        │    │
-│  │                                                     │    │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐        │    │
-│  │  │Wishlist  │  │  Uber    │  │ Calendar │        │    │
-│  │  │ Analyzer │  │   API    │  │ Conflict │        │    │
-│  │  └──────────┘  └──────────┘  └──────────┘        │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          ↓                                   │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │            LLM Reasoning Layer                      │    │
-│  │  • OpenAI GPT-4o-mini (primary)                    │    │
-│  │  • Context window: 128k tokens                     │    │
-│  │  • Structured output (JSON mode)                   │    │
-│  │  • Function calling for tool use                   │    │
-│  └────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph EventAgent["Event Agent (Orchestrator)"]
+        direction TB
+        
+        subgraph DecisionLayer["Agent Decision Layer"]
+            D1[Analyze event context]
+            D2[Determine required tools/services]
+            D3[Coordinate parallel tool execution]
+            D4[Synthesize results into actionable tasks]
+        end
+        
+        subgraph ToolLayer["Tool/Service Layer"]
+            direction LR
+            Weather[Weather<br/>Service]
+            Docs[Google<br/>Docs]
+            MCP[MCP<br/>Tools]
+            Wishlist[Wishlist<br/>Analyzer]
+            Uber[Uber<br/>API]
+            Calendar[Calendar<br/>Conflict]
+        end
+        
+        subgraph LLMLayer["LLM Reasoning Layer"]
+            L1[OpenAI GPT-4o-mini]
+            L2[Context window: 128k tokens]
+            L3[Structured output JSON mode]
+            L4[Function calling for tool use]
+        end
+        
+        DecisionLayer --> ToolLayer
+        ToolLayer --> LLMLayer
+    end
+    
+    style EventAgent fill:#f0f8ff
+    style DecisionLayer fill:#e1f5ff
+    style ToolLayer fill:#fff4e1
+    style LLMLayer fill:#ffe1e1
 ```
 
 ### Agent Capabilities
@@ -354,13 +357,26 @@ const [weatherData, documentContext, mealPlanResult] = await Promise.all([
 #### 2. Tool Selection & Orchestration
 The agent decides which tools to use based on event characteristics:
 
-```
-Event Type Detection:
-├─ "meal prep" → Meal Planning MCP Tool
-├─ Outdoor event → Weather Service
-├─ Has Google Doc URL → Document Processor
-├─ Transportation needed → Uber API
-└─ Wishlist item → Wishlist Analyzer
+```mermaid
+graph LR
+    Event[Event Type Detection] --> MealPrep{Contains<br/>'meal prep'?}
+    Event --> Outdoor{Outdoor<br/>event?}
+    Event --> HasDoc{Has Google<br/>Doc URL?}
+    Event --> Transport{Transportation<br/>needed?}
+    Event --> Wishlist{Wishlist<br/>item?}
+    
+    MealPrep -->|Yes| MCPTool[Meal Planning<br/>MCP Tool]
+    Outdoor -->|Yes| WeatherSvc[Weather Service]
+    HasDoc -->|Yes| DocProc[Document Processor]
+    Transport -->|Yes| UberAPI[Uber API]
+    Wishlist -->|Yes| WishlistAn[Wishlist Analyzer]
+    
+    style Event fill:#e1f5ff
+    style MCPTool fill:#d4edda
+    style WeatherSvc fill:#d4edda
+    style DocProc fill:#d4edda
+    style UberAPI fill:#d4edda
+    style WishlistAn fill:#d4edda
 ```
 
 #### 3. Reasoning & Task Generation
@@ -372,14 +388,22 @@ The agent uses LLM reasoning to:
 - Create timeline with milestones
 
 **Prompt Structure**:
-```
-System Prompt: Role definition, constraints, output format
-    ↓
-Context Injection: Weather, docs, meal plans, wishlist
-    ↓
-User Prompt: Event details, specific requirements
-    ↓
-Structured Output: JSON with tasks, timeline, tips
+
+```mermaid
+graph TD
+    A[System Prompt] --> B[Context Injection]
+    B --> C[User Prompt]
+    C --> D[Structured Output]
+    
+    A1[Role definition<br/>Constraints<br/>Output format] -.-> A
+    B1[Weather<br/>Docs<br/>Meal plans<br/>Wishlist] -.-> B
+    C1[Event details<br/>Specific requirements] -.-> C
+    D1[JSON with tasks<br/>Timeline<br/>Tips] -.-> D
+    
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style C fill:#e1f5ff
+    style D fill:#d4edda
 ```
 
 #### 4. Adaptive Behavior
@@ -391,72 +415,99 @@ The agent adapts based on:
 
 ### Agent Workflow
 
-```
-1. Event Input
-   ↓
-2. Event Classification
-   ├─ Type: meeting, meal prep, travel, etc.
-   ├─ Complexity: simple, moderate, complex
-   └─ Required tools: weather, docs, meal planning
-   ↓
-3. Context Orchestration
-   ├─ Parallel tool execution
-   ├─ Timeout handling (35s max)
-   └─ Partial success handling
-   ↓
-4. LLM Reasoning
-   ├─ Synthesize all context
-   ├─ Generate preparation tasks
-   ├─ Create timeline
-   └─ Provide tips
-   ↓
-5. Response Formatting
-   ├─ Structure tasks by priority
-   ├─ Add suggested dates
-   └─ Include rich context (weather, meal plans)
-   ↓
-6. Caching & State Management
-   ├─ Cache remaining tasks
-   ├─ Track scheduled vs unscheduled
-   └─ Enable incremental scheduling
+```mermaid
+graph TD
+    A[1. Event Input] --> B[2. Event Classification]
+    
+    B --> B1[Type: meeting, meal prep, travel]
+    B --> B2[Complexity: simple, moderate, complex]
+    B --> B3[Required tools: weather, docs, meal planning]
+    
+    B1 --> C[3. Context Orchestration]
+    B2 --> C
+    B3 --> C
+    
+    C --> C1[Parallel tool execution]
+    C --> C2[Timeout handling 35s max]
+    C --> C3[Partial success handling]
+    
+    C1 --> D[4. LLM Reasoning]
+    C2 --> D
+    C3 --> D
+    
+    D --> D1[Synthesize all context]
+    D --> D2[Generate preparation tasks]
+    D --> D3[Create timeline]
+    D --> D4[Provide tips]
+    
+    D1 --> E[5. Response Formatting]
+    D2 --> E
+    D3 --> E
+    D4 --> E
+    
+    E --> E1[Structure tasks by priority]
+    E --> E2[Add suggested dates]
+    E --> E3[Include rich context]
+    
+    E1 --> F[6. Caching & State Management]
+    E2 --> F
+    E3 --> F
+    
+    F --> F1[Cache remaining tasks]
+    F --> F2[Track scheduled vs unscheduled]
+    F --> F3[Enable incremental scheduling]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style C fill:#ffe1e1
+    style D fill:#e1f5ff
+    style E fill:#fff4e1
+    style F fill:#d4edda
 ```
 
 ### Voice Agent Architecture
 
 The voice assistant is a specialized agent with conversation memory:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Voice Agent                               │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │         Conversation State Manager                  │    │
-│  │  • Track last 4 exchanges (8 messages)             │    │
-│  │  • Maintain event details across turns             │    │
-│  │  • Clear on event creation                         │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          ↓                                   │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │         Intent Detection & Parsing                  │    │
-│  │  • add_event, delete_event, add_to_wishlist        │    │
-│  │  • Extract: title, date, time, location            │    │
-│  │  • Handle ambiguity with follow-ups                │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          ↓                                   │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │         Multi-turn Dialogue Management              │    │
-│  │  • Ask clarifying questions                        │    │
-│  │  • Resolve references ("that meeting", "it")       │    │
-│  │  • Handle corrections ("change it to 3pm")         │    │
-│  └────────────────────────────────────────────────────┘    │
-│                          ↓                                   │
-│  ┌────────────────────────────────────────────────────┐    │
-│  │         Conflict Detection & Resolution             │    │
-│  │  • Check calendar for conflicts                    │    │
-│  │  • Suggest alternative times                       │    │
-│  │  • Allow override (double booking)                 │    │
-│  └────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph VoiceAgent["Voice Agent"]
+        direction TB
+        
+        subgraph StateManager["Conversation State Manager"]
+            S1[Track last 4 exchanges<br/>8 messages]
+            S2[Maintain event details<br/>across turns]
+            S3[Clear on event creation]
+        end
+        
+        subgraph IntentDetection["Intent Detection & Parsing"]
+            I1[add_event, delete_event<br/>add_to_wishlist]
+            I2[Extract: title, date<br/>time, location]
+            I3[Handle ambiguity<br/>with follow-ups]
+        end
+        
+        subgraph DialogueManagement["Multi-turn Dialogue Management"]
+            D1[Ask clarifying questions]
+            D2[Resolve references<br/>'that meeting', 'it']
+            D3[Handle corrections<br/>'change it to 3pm']
+        end
+        
+        subgraph ConflictResolution["Conflict Detection & Resolution"]
+            C1[Check calendar<br/>for conflicts]
+            C2[Suggest alternative times]
+            C3[Allow override<br/>double booking]
+        end
+        
+        StateManager --> IntentDetection
+        IntentDetection --> DialogueManagement
+        DialogueManagement --> ConflictResolution
+    end
+    
+    style VoiceAgent fill:#f0f8ff
+    style StateManager fill:#e1f5ff
+    style IntentDetection fill:#fff4e1
+    style DialogueManagement fill:#ffe1e1
+    style ConflictResolution fill:#d4edda
 ```
 
 **Key Design Decisions**:
@@ -659,7 +710,7 @@ class MCPMealPlanningClient {
 - Generate LLM fallback for meal plans
 
 **Technology Choices**:
-- **OpenAI GPT-4o**: Complex reasoning for task breakdown
+- **OpenAI GPT-4o-mini**: Complex reasoning for task breakdown
 - **Structured Output**: JSON mode for reliable parsing
 - **Context Window**: 128k tokens for rich context
 
