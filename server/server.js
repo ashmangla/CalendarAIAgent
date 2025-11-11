@@ -549,9 +549,23 @@ app.post('/api/analyze-event', async (req, res) => {
       });
       
       // If both remaining and linked tasks are 0, this event was incorrectly marked as analyzed
+      // OR the linked tasks were deleted from Google Calendar
       // Force re-analysis instead of returning empty cache
       if (remainingTasks.length === 0 && linkedTasks.length === 0) {
         console.log('⚠️  Event marked as analyzed but has no tasks - forcing re-analysis');
+        console.log('🗑️  Clearing cache and resetting analyzed flag');
+        
+        // Clear the cache
+        if (eventIdentifier) {
+          taskCache.clear(eventIdentifier);
+        }
+        
+        // Reset analyzed flag
+        eventToAnalyze = {
+          ...eventToAnalyze,
+          isAnalyzed: false
+        };
+        
         // Fall through to normal analysis below
       } else {
  

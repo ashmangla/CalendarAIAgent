@@ -23,8 +23,17 @@ const taskKey = (task) => {
     return `id:${task.id}`;
   }
 
-  const base = [
-    task.task || '',
+  // Match frontend logic: check task.task first, then task.title
+  if (task.task) {
+    return `task:${task.task.toString().trim().toLowerCase()}`;
+  }
+
+  if (task.title) {
+    return `title:${task.title.toString().trim().toLowerCase()}`;
+  }
+
+  // Fallback: match frontend's fallback logic (category | description | estimatedTime)
+  const parts = [
     task.category || '',
     task.description || '',
     task.estimatedTime || ''
@@ -32,7 +41,7 @@ const taskKey = (task) => {
     .map((part) => part.toString().trim().toLowerCase())
     .join('|');
 
-  return `fallback:${base}`;
+  return `fallback:${parts}`;
 };
 
 class TaskCache {

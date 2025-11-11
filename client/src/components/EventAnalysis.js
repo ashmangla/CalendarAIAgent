@@ -216,6 +216,19 @@ const EventAnalysis = ({ event, onClose, onTasksAdded, onEventAnalyzed }) => {
           remaining: remaining.map(t => ({ task: t.task, category: t.category }))
         });
 
+        // If both linked and remaining are 0, the tasks were likely deleted from Google Calendar
+        // Don't mark as analyzed - let user regenerate
+        if (linked.length === 0 && remaining.length === 0) {
+          console.log('⚠️  [Hydration] No tasks found - tasks may have been deleted. Clearing state.');
+          sessionAnalysisCache.delete(eventId);
+          setAnalysis(null);
+          setIsAlreadyAnalyzed(false);
+          setHasScheduledTasks(false);
+          setLoading(false);
+          hydratingRef.current = false;
+          return;
+        }
+
         const hydratedAnalysis = normalizeAnalysisPayload({
           eventSummary: `Remaining checklist items for ${event.title || 'this event'}`,
           preparationTasks: remaining,
@@ -1424,14 +1437,14 @@ function getTaskIdentifier(task) {
                 ) : (
                   <div className="no-remaining-tasks">
                     <p>
-                      {hasLinkedTasks || hasScheduledTasks
-                        ? (hasLinkedTasks 
-                            ? 'All checklist items from this checklist are on your calendar.'
-                            : 'All checklist items have already been added to your calendar. 🎉')
+                      {hasLinkedTasks
+                        ? 'All checklist items from this checklist are on your calendar.'
+                        : (hasScheduledTasks || isAlreadyAnalyzed)
+                        ? 'All checklist items have already been added to your calendar. 🎉'
                         : 'No checklist items were generated. Try regenerating or check the event details.'}
                     </p>
                     <p className="no-remaining-subtext">
-                      {hasScheduledTasks || hasLinkedTasks
+                      {hasLinkedTasks || hasScheduledTasks || isAlreadyAnalyzed
                         ? 'Modify these tasks directly from your calendar if plans change.'
                         : 'Click "Generate Checklist" to create tasks for this event.'}
                     </p>
