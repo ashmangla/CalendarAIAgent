@@ -103,6 +103,132 @@ Calendar AI Agent is an intelligent calendar management system that uses AI to a
 | **dotenv** | Environment variable management |
 | **Git** | Version control |
 
+### Tech Stack Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph Input["User Input Layer"]
+        UserQuery[User Query/Event]
+        VoiceInput[Voice Input<br/>Web Speech API]
+        CalendarUI[Calendar UI<br/>React 18.x]
+    end
+    
+    subgraph Frontend["Frontend - React SPA"]
+        ReactApp[React Application]
+        AxiosClient[Axios HTTP Client<br/>Interceptors]
+        LocalStorage[localStorage<br/>Multi-user Auth]
+    end
+    
+    subgraph Orchestration["Orchestration Layer - Express.js"]
+        ExpressServer[Express Server<br/>Node.js 18.x]
+        AuthMiddleware[Auth Middleware<br/>Hybrid OAuth]
+        SessionMgmt[Session Management<br/>express-session]
+        EventAgent[Event Agent<br/>Agentic AI]
+    end
+    
+    subgraph Services["Backend Services"]
+        VoiceAdapter[Voice Adapter<br/>OpenAI Whisper]
+        MCPClient[MCP Client<br/>JSON-RPC 2.0]
+        DocProcessor[Document Processor<br/>Google Docs API]
+        WeatherSvc[Weather Service<br/>OpenWeatherMap]
+        WishlistSvc[Wishlist Analyzer<br/>GPT-4o-mini]
+        TaskCache[Task Cache<br/>In-Memory Store]
+    end
+    
+    subgraph AILayer["AI/ML Layer"]
+        GPT4oMini[OpenAI GPT-4o-mini<br/>128k context]
+        WhisperAPI[Whisper API<br/>Transcription]
+        StructuredOutput[JSON Mode<br/>Structured Output]
+    end
+    
+    subgraph ExternalAPIs["External APIs & Services"]
+        GoogleCalendar[Google Calendar API<br/>OAuth 2.0]
+        GoogleDocs[Google Docs API<br/>Document Context]
+        SpoonacularMCP[Spoonacular MCP<br/>Meal Planning]
+        OpenWeather[OpenWeatherMap API<br/>Weather Data]
+        UberAPI[Uber API<br/>Ride Estimates]
+    end
+    
+    subgraph DataLayer["Data & State Management"]
+        InMemoryCache[In-Memory Cache<br/>Tasks & Events]
+        SessionStore[Session Store<br/>Conversations]
+        ClientStorage[Client Storage<br/>localStorage]
+    end
+    
+    subgraph Hosting["Hosting & Deployment"]
+        LocalDev[Local Development<br/>npm run dev]
+        CloudDeploy[Cloud Deployment<br/>Railway/Vercel]
+    end
+    
+    %% User Input Flow
+    UserQuery --> ReactApp
+    VoiceInput --> ReactApp
+    CalendarUI --> ReactApp
+    
+    %% Frontend to Backend
+    ReactApp --> AxiosClient
+    ReactApp --> LocalStorage
+    AxiosClient --> ExpressServer
+    LocalStorage -.-> AuthMiddleware
+    
+    %% Orchestration Flow
+    ExpressServer --> AuthMiddleware
+    AuthMiddleware --> SessionMgmt
+    AuthMiddleware --> EventAgent
+    EventAgent --> VoiceAdapter
+    EventAgent --> MCPClient
+    EventAgent --> DocProcessor
+    EventAgent --> WeatherSvc
+    EventAgent --> WishlistSvc
+    EventAgent --> TaskCache
+    
+    %% AI Layer Connections
+    EventAgent --> GPT4oMini
+    VoiceAdapter --> WhisperAPI
+    VoiceAdapter --> GPT4oMini
+    WishlistSvc --> GPT4oMini
+    GPT4oMini --> StructuredOutput
+    
+    %% External API Connections
+    ExpressServer --> GoogleCalendar
+    DocProcessor --> GoogleDocs
+    MCPClient --> SpoonacularMCP
+    WeatherSvc --> OpenWeather
+    ExpressServer -.-> UberAPI
+    
+    %% Data Layer Connections
+    TaskCache --> InMemoryCache
+    SessionMgmt --> SessionStore
+    LocalStorage --> ClientStorage
+    
+    %% Output Flow
+    StructuredOutput --> EventAgent
+    EventAgent --> ExpressServer
+    ExpressServer --> AxiosClient
+    AxiosClient --> ReactApp
+    ReactApp --> CalendarUI
+    
+    %% Deployment
+    ExpressServer -.-> LocalDev
+    ExpressServer -.-> CloudDeploy
+    ReactApp -.-> LocalDev
+    ReactApp -.-> CloudDeploy
+    
+    %% Styling
+    style Input fill:#e1f5ff
+    style Frontend fill:#fff4e1
+    style Orchestration fill:#f0f8ff
+    style Services fill:#e8f5e9
+    style AILayer fill:#ffe1e1
+    style ExternalAPIs fill:#f3e5f5
+    style DataLayer fill:#fff9c4
+    style Hosting fill:#e0e0e0
+    
+    style EventAgent fill:#4fc3f7,stroke:#0277bd,stroke-width:3px
+    style GPT4oMini fill:#ef5350,stroke:#c62828,stroke-width:3px
+    style ReactApp fill:#ffa726,stroke:#e65100,stroke-width:3px
+```
+
 ---
 
 ## System Architecture
