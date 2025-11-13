@@ -7,6 +7,21 @@ const { google } = require('googleapis');
 const crypto = require('crypto');
 const { findFreeSlots } = require('../services/calendarUtils');
 
+// Google OAuth2 client
+let oauth2Client;
+
+// Initialize OAuth2 client
+function initOAuth2Client() {
+  if (!oauth2Client) {
+    oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5001/api/google-calendar/callback'
+    );
+  }
+  return oauth2Client;
+}
+
 let wishlistAnalyzer;
 try {
   wishlistAnalyzer = new WishlistAnalyzer();
@@ -247,7 +262,7 @@ router.post('/items/:id/suggestions', async (req, res) => {
       });
     }
 
-    const oauth2Client = new google.auth.OAuth2();
+    const oauth2Client = initOAuth2Client();
     oauth2Client.setCredentials(tokens);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 

@@ -361,6 +361,12 @@ function normalizeEventsForConflictCheck(events) {
   return events.map(event => {
     let dateStr, timeStr, duration;
     
+    // Skip all-day events - they don't have specific times and shouldn't participate in conflict checking
+    if (event.allDay || (!event.date?.includes('T') && !event.time)) {
+      // Silently skip all-day events - they're not time conflicts
+      return null;
+    }
+    
     // Handle Google Calendar events (date is ISO string like "2024-01-15T14:30:00Z")
     if (event.date && (typeof event.date === 'string' && event.date.includes('T'))) {
       const dateTime = new Date(event.date);
